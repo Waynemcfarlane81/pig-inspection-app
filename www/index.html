@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pig Inspection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --field:#1F3A2E; --field-2:#2C5140; --yard:#ECEEEA; --card:#FFFFFF; --steel:#8A9590;
+  --line:#D5DAD5; --ink:#17201B; --ink-2:#4A5650; --tag:#F2C230; --tag-ink:#2A2200;
+  --loss:#C2412D; --loss-bg:#FBEAE6; --ok:#2E7D4F; --ok-bg:#E3F2E8; --input:#F6F7F4;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --field:#16291F; --field-2:#22402F; --yard:#101612; --card:#18211C; --steel:#7C8984;
+    --line:#2C3832; --ink:#E7ECE8; --ink-2:#A9B5AE; --tag:#E8B923; --tag-ink:#231B00;
+    --loss:#EF7A62; --loss-bg:#3A1D17; --ok:#6FCB94; --ok-bg:#16301F; --input:#121915;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --field:#16291F; --field-2:#22402F; --yard:#101612; --card:#18211C; --steel:#7C8984;
+  --line:#2C3832; --ink:#E7ECE8; --ink-2:#A9B5AE; --tag:#E8B923; --tag-ink:#231B00;
+  --loss:#EF7A62; --loss-bg:#3A1D17; --ok:#6FCB94; --ok-bg:#16301F; --input:#121915;
+  color-scheme:dark;
+}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 120px)}
+body{margin:0;background:var(--yard);color:var(--ink);font:400 16px/1.45 "Barlow",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--tag);outline-offset:2px}
+
+/* Header */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--field);color:#fff}
+.top-in{max-width:760px;margin:0 auto;padding:12px 16px 0}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand h1{margin:0;font:700 26px/1 "Barlow Condensed","Arial Narrow",sans-serif;letter-spacing:.2px}
+.sync{font-size:13px;color:#C9D6CE;white-space:nowrap}
+.tabs{display:flex;gap:4px;margin-top:10px}
+.tab-short{display:none}
+.tabs button{flex:1;min-width:0;white-space:nowrap;background:transparent;border:0;color:#C9D6CE;padding:10px 8px 12px;font-weight:600;font-size:15px;border-bottom:3px solid transparent;cursor:pointer}
+.tabs button[aria-selected="true"]{color:#fff;border-bottom-color:var(--tag)}
+
+main{max-width:760px;margin:0 auto;padding:16px 16px 120px}
+.view[hidden]{display:none}
+
+/* Inspection details */
+.details{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.details label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{width:100%;background:var(--input);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:46px}
+textarea{min-height:64px;resize:vertical}
+select:disabled{opacity:.5}
+
+.geo{grid-column:1/-1}
+.geo label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.geo-row{display:flex;gap:8px}
+.geo-row input{flex:1;min-width:0}
+.geo-row .btn{flex:none;white-space:nowrap}
+.geo-out{font-size:14px;margin-top:6px;color:var(--ink-2);min-height:20px}
+.geo-out a{color:var(--field-2);font-weight:700}
+:root[data-theme="dark"] .geo-out a{color:var(--tag)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .geo-out a{color:var(--tag)}}
+.maplink{color:inherit;font-weight:600}
+.ub{display:inline-block;font-size:14px;font-weight:700;padding:8px 10px;border-radius:6px;margin-bottom:4px}
+.ub-ok{background:var(--ok-bg);color:var(--ok)}
+.ub-warn{background:color-mix(in srgb,var(--tag) 22%,var(--card));color:var(--ink)}
+.ub-bad{background:var(--loss-bg);color:var(--loss)}
+.baitgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.baitgrid .check label{justify-content:flex-start;min-height:48px;padding:8px 10px}
+.btn-small{min-height:36px;padding:6px 12px;font-size:14px}
+.tag.tag-rodent{background:var(--steel);color:#fff}
+.check.alert input:checked + label{border-color:var(--loss);background:var(--loss-bg);color:var(--loss)}
+.check.alert input:checked + label .box{background:var(--loss);border-color:var(--loss)}
+.check.warn input:checked + label{border-color:var(--tag);background:color-mix(in srgb,var(--tag) 18%,var(--card))}
+.check.warn input:checked + label .box{background:#9A7400;border-color:#9A7400}
+.pill.loss{border-color:var(--loss)}
+.rod-table{display:grid;gap:8px}
+.rod-row{display:grid;grid-template-columns:1fr 0.9fr 1.3fr 1.2fr;gap:10px;align-items:center}
+.rod-headrow{font-size:14px;font-weight:600;color:var(--ink-2)}
+.rod-area{font-weight:700}
+.rod-row .check label{min-height:46px;padding:8px 10px}
+.rod-sum{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;line-height:1.6}
+.btn-wa{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#1F8F4E;color:#fff}
+.btn-wa:hover{background:#187A42}
+.entry-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.entry-actions .btn{min-height:44px}
+.treat{margin-top:12px;padding:10px 12px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.treat-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:6px}
+.treat-head .link-x{padding:2px 6px}
+.btn-add{margin-top:12px;width:100%;min-height:44px;border-style:dashed}
+hr.tsep{border:0;border-top:1px dashed var(--line);margin:6px 0}
+.wd-out:empty{display:none}
+.wd-panel{margin-bottom:14px;border-color:var(--loss)}
+.add-grid .span-all{grid-column:1/-1}
+.add-grid textarea{min-height:56px}
+.ref-box{background:var(--ok-bg);border:1px solid var(--ok);border-radius:8px;padding:10px 12px;font-size:14px;line-height:1.5}
+.med-use{max-width:60ch;margin-top:2px;color:var(--ink)!important}
+.med-actions{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none}
+.link-edit{color:var(--field-2)!important}
+.med-info .hint{display:block;margin-top:4px}
+.serials li{align-items:flex-start}
+.subtabs{display:flex;gap:6px;margin-bottom:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px}
+.subtabs button{flex:1;border:0;background:transparent;padding:10px 8px;border-radius:7px;font-weight:700;color:var(--ink-2);cursor:pointer;min-height:44px}
+.subtabs button[aria-selected="true"]{background:var(--field);color:#fff}
+.panel.alert-panel{border-color:var(--loss);background:var(--loss-bg);line-height:1.5}
+.alert-title{display:block;color:var(--loss);margin-bottom:4px;font-size:17px}
+.sym-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.sym-grid .span-all{grid-column:1/-1}
+.sym-grid label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.sym-cause{padding:10px 12px;background:var(--input);border-radius:8px;margin-bottom:8px;line-height:1.5}
+.sym-urgent{padding:10px 12px;background:var(--loss-bg);color:var(--loss);font-weight:700;border-radius:8px;margin-bottom:8px}
+.sym-med{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:10px;line-height:1.5}
+.sym-med-head{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.stock{font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;background:var(--input);color:var(--ink-2)}
+.stock.yes{background:var(--ok-bg);color:var(--ok)}
+.dose-big{font:700 26px/1.2 'Barlow Condensed',sans-serif;margin:4px 0}
+.dose-big span{font:400 15px 'Barlow',sans-serif;color:var(--ink-2)}
+.totals{display:flex;gap:10px;margin:14px 0 6px;flex-wrap:wrap}
+.pill{display:flex;align-items:baseline;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:14px;color:var(--ink-2)}
+.pill b{font:700 20px/1 "Barlow Condensed",sans-serif;color:var(--ink)}
+.pill.loss b{color:var(--loss)}
+
+/* Location cards with ear-tag */
+.loc{background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:18px;overflow:hidden}
+.loc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 14px 10px}
+.tag{position:relative;display:inline-flex;align-items:center;background:var(--tag);color:var(--tag-ink);font:700 22px/1 "Barlow Condensed",sans-serif;padding:8px 16px 8px 30px;border-radius:6px 22px 22px 6px}
+.tag::before{content:"";position:absolute;left:11px;top:50%;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;background:var(--card);box-shadow:inset 0 0 0 2px rgba(0,0,0,.18)}
+.loc-state{font-size:14px;font-weight:600;color:var(--ink-2)}
+.loc-state.done{color:var(--ok)}
+.loc-body{padding:4px 14px 16px}
+.group-title{font-size:14px;font-weight:600;color:var(--ink-2);margin:12px 0 8px}
+
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.check{position:relative}
+.check input{position:absolute;opacity:0;width:1px;height:1px}
+.check label{display:flex;align-items:center;gap:10px;min-height:52px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input);cursor:pointer;font-weight:500;user-select:none}
+.box{flex:none;width:26px;height:26px;border:2px solid var(--steel);border-radius:5px;display:grid;place-items:center;background:var(--card)}
+.box svg{width:16px;height:16px;opacity:0}
+.check input:checked + label{border-color:var(--ok);background:var(--ok-bg)}
+.check input:checked + label .box{background:var(--ok);border-color:var(--ok)}
+.check input:checked + label .box svg{opacity:1}
+.check input:focus-visible + label{outline:3px solid var(--tag);outline-offset:2px}
+
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.span-all{grid-column:1/-1}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
+.row3 label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.row label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.dead select.has{border-color:var(--loss);background:var(--loss-bg);color:var(--loss);font-weight:700}
+.med{margin-top:12px;padding:12px;border-radius:8px;border:1px dashed var(--line)}
+.med.on{border-style:solid;border-color:var(--tag);background:color-mix(in srgb,var(--tag) 10%,var(--card))}
+
+/* Save bar */
+.savebar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+.savebar-in{max-width:760px;margin:0 auto;display:flex;gap:10px;align-items:center}
+.btn{border:0;border-radius:8px;padding:12px 18px;min-height:48px;font-weight:700;cursor:pointer}
+.btn-primary{background:var(--field);color:#fff;flex:1}
+:root[data-theme="dark"] .btn-primary{background:var(--tag);color:var(--tag-ink)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn-primary{background:var(--tag);color:var(--tag-ink)}}
+.btn-quiet{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn-danger{display:block;min-height:44px;background:transparent;border:1px solid var(--loss);color:var(--loss)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.hint{font-size:14px;color:var(--ink-2)}
+
+/* History */
+.hist-tools{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}
+.entry{background:var(--card);border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+.entry summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.entry summary::-webkit-details-marker{display:none}
+.entry-title{font-weight:700}
+.entry-meta{font-size:14px;color:var(--ink-2)}
+.dead-badge{font:700 18px/1 "Barlow Condensed",sans-serif;padding:6px 10px;border-radius:6px;background:var(--ok-bg);color:var(--ok);white-space:nowrap}
+.med-badge{background:color-mix(in srgb,var(--tag) 25%,var(--card));color:var(--ink)}
+.dead-badge.loss{background:var(--loss-bg);color:var(--loss)}
+.entry-body{padding:0 14px 14px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:620px}
+th,td{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}
+th{color:var(--ink-2);font-weight:600}
+.y{color:var(--ok);font-weight:700}.n{color:var(--loss);font-weight:700}
+.empty{text-align:center;padding:40px 16px;color:var(--ink-2);background:var(--card);border:1px dashed var(--line);border-radius:10px}
+
+/* Serial list */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.add-row{display:flex;gap:8px;margin:10px 0 14px}
+.add-row input{flex:1}
+.add-grid{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:10px;align-items:end;margin:12px 0 14px}
+.add-grid label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.med-sub{display:block;font-weight:400;font-size:14px;color:var(--ink-2)}
+.serials{list-style:none;margin:0;padding:0}
+.serials li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-weight:600}
+.serials li:last-child{border-bottom:0}
+.link-x{background:none;border:0;color:var(--loss);font-weight:600;cursor:pointer;padding:6px 8px}
+
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--card);padding:10px 16px;border-radius:8px;font-weight:600;z-index:30;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+.err{color:var(--loss);font-weight:600;font-size:14px;margin-top:8px}
+
+/* Pig numbers, performance and NAS settings */
+:root{--bar:#2C5140}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bar:#6FCB94}}
+:root[data-theme="dark"]{--bar:#6FCB94}
+.h2{margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif}
+.sync.warn{color:#FFD9A0}
+.loc-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right}
+.loc-pigs{font-size:14px;font-weight:700;color:var(--ink)}
+.pig-total{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}
+.pig-total span{font:700 22px/1.2 'Barlow Condensed',sans-serif}
+.pig-total b{font:700 40px/1 'Barlow Condensed',sans-serif}
+.pig-areas{display:grid;gap:8px;margin-top:12px}
+.pig-area{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.pig-area .tag{grid-row:1/3;font-size:18px}
+.pig-n{font:700 30px/1 'Barlow Condensed',sans-serif;text-align:right}
+.pig-area .hint{text-align:right}
+.nas-result{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--input);font-weight:600}
+.nas-result.good{background:var(--ok-bg);color:var(--ok)}
+.nas-result.bad{background:var(--loss-bg);color:var(--loss)}
+.sync-box{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.sync-box .btn{flex:none;min-height:44px}
+.stat-tools{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.stat-tools label{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.tile-l{font-size:13px;font-weight:600;color:var(--ink-2)}
+.tile-v{font:700 30px/1.1 'Barlow Condensed',sans-serif;margin-top:2px}
+.tile-s{font-size:13px;color:var(--ink-2)}
+.tile.bad .tile-v{color:var(--loss)}
+.tile.warn{border-color:var(--tag)}
+.chart-panel{margin-bottom:12px}
+.chart-panel h3{margin:0 0 8px;font:700 19px/1.2 'Barlow Condensed',sans-serif}
+.chart{width:100%;overflow:hidden}
+.chart svg{display:block}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .base{stroke:var(--steel);stroke-width:1}
+.chart .ax{fill:var(--ink-2);font-size:11px}
+.chart .val{fill:var(--ink);font-size:11px;font-weight:600}
+.chart .ln{fill:none;stroke:var(--bar);stroke-width:2;stroke-linejoin:round}
+.chart .dot{fill:var(--bar);stroke:var(--card);stroke-width:2}
+.chart .hit{fill:transparent;cursor:pointer}
+.chart .hit.on{fill:color-mix(in srgb,var(--ink) 7%,transparent)}
+.tip-out{font-size:14px;color:var(--ink-2);min-height:20px;margin-top:4px}
+.stat-table{min-width:520px}
+.stat-table td,.stat-table th{white-space:nowrap}
+.hbars{display:grid;gap:8px}
+.hb-row{display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:10px;align-items:center;font-size:14px}
+.hb-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hb-track{height:14px;background:var(--input);border-radius:4px;overflow:hidden}
+.hb-bar{display:block;height:100%;border-radius:0 4px 4px 0}
+.hb-v{color:var(--ink-2);white-space:nowrap}
+.entry-actions .btn-quiet{min-height:44px}
+
+@media (max-width:520px){
+  .tiles{grid-template-columns:1fr 1fr}
+  .tabs{gap:0}
+  .tabs button{font-size:13px;padding:10px 0 12px}
+  .pig-total b{font-size:34px}
+  .sym-grid{grid-template-columns:1fr}
+  .rod-row{grid-template-columns:1fr 1fr;row-gap:6px}
+  .rod-row .rod-area{grid-column:1/-1;margin-top:6px}
+  .rod-row select{grid-column:1/-1}
+  .rod-headrow{display:none}
+  .tab-long{display:none}.tab-short{display:inline}
+  .add-row{flex-direction:column}
+  .savebar .btn{padding:12px 12px}
+  #save{font-size:15px}
+  .baitgrid{grid-template-columns:repeat(2,1fr)}
+  .geo-row{flex-direction:column}
+  .details{grid-template-columns:1fr}
+  .checks{grid-template-columns:1fr}
+  .row,.row3,.add-grid{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><h1>Pig inspection</h1><span class="sync" id="sync">Starting…</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-view="inspect"><span class="tab-long">New inspection</span><span class="tab-short">Inspect</span></button>
+      <button role="tab" aria-selected="false" data-view="pigs"><span class="tab-long">Pig numbers</span><span class="tab-short">Pigs</span></button>
+      <button role="tab" aria-selected="false" data-view="history">History</button>
+      <button role="tab" aria-selected="false" data-view="stats"><span class="tab-long">Performance</span><span class="tab-short">Stats</span></button>
+      <button role="tab" aria-selected="false" data-view="meds"><span class="tab-long">Medications</span><span class="tab-short">Meds</span></button>
+      <button role="tab" aria-selected="false" data-view="ops"><span class="tab-long">Settings</span><span class="tab-short">More</span></button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- NEW INSPECTION -->
+  <section class="view" id="view-inspect">
+    <div class="details">
+      <div><label for="f-name">Inspected by</label><select id="f-name"></select></div>
+      <div class="row" style="gap:10px">
+        <div><label for="f-date">Date</label><input type="date" id="f-date"></div>
+        <div><label for="f-time">Time</label><input type="time" id="f-time"></div>
+      </div>
+      <div class="geo">
+        <label for="f-geo">Location</label>
+        <div class="geo-row">
+          <input type="text" id="f-geo" placeholder="Paste a Google Maps link or coordinates" autocomplete="off" inputmode="url">
+          <button class="btn btn-quiet" id="geo-btn" type="button">Use my location</button>
+        </div>
+        <div class="geo-out" id="geo-out"></div>
+      </div>
+    </div>
+    <div class="totals">
+      <div class="pill"><b id="t-done">0/6</b> areas fully checked</div>
+      <div class="pill" id="t-dead-pill"><b id="t-dead">0</b> dead pigs</div>
+      <div class="pill"><b id="t-med">0</b> pigs medicated in <span id="t-med-areas">0 areas</span></div>
+      <div class="pill" id="t-rod-pill"><b id="t-rod">0</b> bait boxes checked</div>
+    </div>
+    <div id="locs"></div>
+    <div id="rodent"></div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="view" id="view-history" hidden>
+    <div class="hist-tools">
+      <span class="hint" id="hist-count">No inspections saved yet</span>
+      <button class="btn btn-quiet" id="export" hidden>Export to CSV</button>
+    </div>
+    <div id="wd-panel"></div>
+    <div id="hist"></div>
+  </section>
+
+  <!-- PIG NUMBERS -->
+  <section class="view" id="view-pigs" hidden>
+    <div class="panel">
+      <div class="pig-total"><span>Pigs on the farm</span><b id="pig-total">0</b></div>
+      <div class="hint">Dead pigs recorded in each saved inspection are taken off automatically.</div>
+      <div id="pig-areas" class="pig-areas"></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 class="h2">Record pig numbers</h2>
+      <div class="sym-grid" style="margin-top:10px">
+        <div class="span-all"><label for="mv-type">What happened</label>
+          <select id="mv-type">
+            <option value="count">Stock count (exact number)</option>
+            <option value="in">Pigs in (arrived or born)</option>
+            <option value="transfer">Moved between areas</option>
+            <option value="sold">Sold / to slaughter</option>
+            <option value="out">Other pigs out (culled, moved off)</option>
+          </select></div>
+        <div><label for="mv-area" id="mv-area-label">Area</label><select id="mv-area"></select></div>
+        <div id="mv-to-wrap" hidden><label for="mv-to">Moved to</label><select id="mv-to"></select></div>
+        <div><label for="mv-qty" id="mv-qty-label">Number of pigs</label><input type="number" id="mv-qty" min="0" max="5000" inputmode="numeric" placeholder="0"></div>
+        <div><label for="mv-date">Date</label><input type="date" id="mv-date"></div>
+        <div class="span-all"><label for="mv-note">Note</label><input type="text" id="mv-note" placeholder="Optional, e.g. buyer or batch" autocomplete="off"></div>
+        <button class="btn btn-primary span-all" id="mv-save">Save</button>
+      </div>
+      <div class="err" id="mv-err" hidden></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 class="h2">Pig numbers history</h2>
+      <div class="hint" style="margin-bottom:6px">Stock counts, movements and deaths, newest first.</div>
+      <ul class="serials" id="mv-list"></ul>
+    </div>
+  </section>
+
+  <!-- PERFORMANCE -->
+  <section class="view" id="view-stats" hidden>
+    <div class="stat-tools">
+      <div><label for="st-period">Period</label>
+        <select id="st-period">
+          <option value="7">Last 7 days</option>
+          <option value="28" selected>Last 4 weeks</option>
+          <option value="91">Last 3 months</option>
+          <option value="182">Last 6 months</option>
+          <option value="365">Last 12 months</option>
+          <option value="all">All time</option>
+        </select></div>
+      <div><label for="st-area">Area</label><select id="st-area"></select></div>
+    </div>
+    <div id="stats-out"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="view-ops" hidden>
+    <div class="panel">
+      <h2 class="h2">Connection to the NAS</h2>
+      <div class="hint">Inspections, pig numbers and the lists below are shared with every phone through the NAS. Tailscale must be switched on.</div>
+      <div class="sym-grid" style="margin-top:10px">
+        <div><label for="nas-host">Server address</label><input type="text" id="nas-host" placeholder="100.x.x.x" autocomplete="off" inputmode="decimal" autocapitalize="off" spellcheck="false"></div>
+        <div><label for="nas-port">Port</label><input type="number" id="nas-port" placeholder="5005" inputmode="numeric"></div>
+        <div class="span-all"><label for="nas-folder">Folder</label><input type="text" id="nas-folder" placeholder="PigReports" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div><label for="nas-user">Username</label><input type="text" id="nas-user" placeholder="pigapp" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div><label for="nas-pass">Password</label><input type="password" id="nas-pass" autocomplete="off"></div>
+        <button class="btn btn-primary span-all" id="nas-save">Save and test connection</button>
+      </div>
+      <div id="nas-result" class="nas-result" hidden></div>
+      <div class="sync-box">
+        <div id="sync-detail" class="hint"></div>
+        <button class="btn btn-quiet" id="sync-now">Sync now</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Operatives</h2>
+      <div class="hint">Everyone added here appears in the Inspected by drop-down.</div>
+      <div class="add-row">
+        <input type="text" id="new-op" placeholder="Operative's full name" autocomplete="off">
+        <button class="btn btn-primary" id="add-op" style="flex:none">Add operative</button>
+      </div>
+      <ul class="serials" id="op-list"></ul>
+      <div class="err" id="op-err" hidden></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 class="h2">Export</h2>
+      <div class="hint">Saves every inspection as a spreadsheet (CSV) in the Exports folder on the NAS.</div>
+      <button class="btn btn-quiet" id="export-nas" style="margin-top:10px">Export all inspections to the NAS</button>
+    </div>
+    <div class="hint" style="margin-top:14px;text-align:center" id="app-version">Pig Inspection</div>
+  </section>
+
+  <!-- MEDICATIONS -->
+  <section class="view" id="view-meds" hidden>
+    <div class="subtabs" role="tablist">
+      <button role="tab" aria-selected="true" data-sub="stock">Medication stock</button>
+      <button role="tab" aria-selected="false" data-sub="sym">Symptoms &amp; dosage</button>
+    </div>
+    <div id="sub-stock">
+    <div class="panel">
+      <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Medications</h2>
+      <div class="hint">Each medication you add here appears in the medication drop-down for every area.</div>
+      <div class="add-grid">
+        <div><label for="new-medname">Medication name</label><input type="text" id="new-medname" placeholder="Start typing, e.g. Pen &amp; Strep" autocomplete="off" list="med-ref-list"></div>
+        <div><label for="new-serial">Serial / batch number</label><input type="text" id="new-serial" placeholder="e.g. 4521-B" autocomplete="off"></div>
+        <div><label for="new-useby">Use by date</label><input type="date" id="new-useby"></div>
+        <div><label for="new-wd">Withdrawal period (days)</label><input type="number" id="new-wd" min="0" max="365" inputmode="numeric" placeholder="e.g. 28"></div>
+        <div class="span-all"><label for="new-usedfor">What it is used for</label><textarea id="new-usedfor" placeholder="Filled in automatically for known medications, or type your own"></textarea></div>
+        <div class="span-all ref-box" id="ref-box" hidden></div>
+        <button class="btn btn-primary span-all" id="add-serial">Add medication</button>
+      </div>
+      <datalist id="med-ref-list"></datalist>
+      <div class="hint" style="margin-bottom:10px">Withdrawal periods for known medications come from UK/EU product information (pig meat and offal, label dose). Always check your product label or your vet's prescription – periods differ between brands, doses and off-label use.</div>
+      <ul class="serials" id="serial-list"></ul>
+      <div class="err" id="serial-err" hidden></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Rodent poisons</h2>
+      <div class="hint">Each poison added here appears in the Poison name drop-down in Rodent control.</div>
+      <div class="add-row">
+        <input type="text" id="new-poison" placeholder="Poison name, e.g. Brodifacoum block" autocomplete="off">
+        <button class="btn btn-primary" id="add-poison" style="flex:none">Add poison</button>
+      </div>
+      <ul class="serials" id="poison-list"></ul>
+      <div class="err" id="poison-err" hidden></div>
+    </div>
+  </div>
+    <div id="sub-sym" hidden>
+      <div class="panel alert-panel">
+        <b class="alert-title">Report straight away – do not treat</b>
+        <div>Fever with pigs off feed, red or dark skin (especially ears and snout), several sudden deaths, or blisters on the snout, mouth or feet can be a notifiable disease such as African or classical swine fever. Call the <b>Defra Rural Services Helpline on 03000 200 301</b> (England) and your vet. Do not move pigs.</div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2 style="margin:0 0 4px;font:700 22px/1.2 'Barlow Condensed',sans-serif">Symptoms &amp; dosage guide</h2>
+        <div class="hint" style="margin-bottom:10px">Pick what you are seeing and the pig's size. The guide shows which medicines in the reference list are licensed for that kind of problem, with the label dose worked out for the pig's weight.</div>
+        <div class="sym-grid">
+          <div class="span-all"><label for="sym-pick">Symptom</label><select id="sym-pick"></select></div>
+          <div><label for="sym-size">Pig size</label><select id="sym-size"></select></div>
+          <div><label for="sym-kg">Weight (kg)</label><select id="sym-kg"></select></div>
+        </div>
+        <div id="sym-out"></div>
+      </div>
+      <div class="hint" style="margin-top:12px">This is a guide only, not a diagnosis. Most of these medicines are prescription-only (POM-V): use them only as your vet prescribes – your vet may choose a different medicine, dose or longer withdrawal period. Doses are from product labels; always read the label before use, and split large volumes between injection sites as the label directs.</div>
+    </div>
+  </section>
+</main>
+
+<div class="savebar" id="savebar">
+  <div class="savebar-in">
+    <button class="btn btn-quiet" id="clear">Clear</button>
+    <button class="btn btn-primary" id="save">Save inspection</button>
+    <button class="btn btn-wa" id="save-wa" title="Save and send the report on WhatsApp"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" style="flex:none"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Save &amp; send</span></button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="nas.js"></script>
+<script src="app.js"></script>
+<script src="stats.js"></script>
+</body>
+</html>

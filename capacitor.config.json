@@ -1,0 +1,8 @@
+{
+  "appId": "tech.holderness.piginspection",
+  "appName": "Pig Inspection",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

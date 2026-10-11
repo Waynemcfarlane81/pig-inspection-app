@@ -1,0 +1,16 @@
+{
+  "name": "pig-inspection-app",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Pig inspection app for Hilltop Farm – saves inspections to the UGREEN NAS over WebDAV",
+  "scripts": {
+    "android:prepare": "npx cap add android && bash android-custom/apply.sh && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}
