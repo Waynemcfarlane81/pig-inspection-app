@@ -787,3 +787,27 @@ NAS.onChange(()=>{const st=NAS.state; if(NAS.configured()&&st.lastSync&&!st.busy
 setInterval(renderSyncState,30000);
 $('app-version').textContent=`Pig Inspection ${NAS.isNative()?'Android app':'(browser)'}`;
 NAS.sync();
+
+/* ---------- Tailscale helper and setup banner ---------- */
+const TS_PKG='com.tailscale.ipn';
+async function tsInstalled(){const n=NAS.native();if(!n||!n.appInstalled)return null;try{return (await n.appInstalled({package:TS_PKG})).installed}catch(e){return null}}
+async function renderTailscale(){
+  const box=$('ts-state'), btn=$('ts-open'); const inst=await tsInstalled(); const st=NAS.state;
+  if(inst===null){$('ts-panel').hidden=!NAS.isNative();return}
+  if(!inst){box.className='nas-result bad';box.textContent='Tailscale is not installed on this phone.';btn.textContent='Install Tailscale';btn.dataset.store='1'}
+  else if(NAS.configured()&&st.lastSync&&!st.lastError){box.className='nas-result good';box.textContent='Tailscale is working – the NAS can be reached.';btn.textContent='Open Tailscale';btn.dataset.store=''}
+  else{box.className='nas-result bad';box.textContent='Tailscale is installed but the NAS can\'t be reached. Open Tailscale, sign in and switch it on, then tap Check again.';btn.textContent='Open Tailscale';btn.dataset.store=''}
+}
+$('ts-open').addEventListener('click',()=>{const n=NAS.native();if(n&&n.openApp)n.openApp({package:TS_PKG,store:!!$('ts-open').dataset.store})});
+$('ts-recheck').addEventListener('click',async()=>{$('ts-state').className='nas-result';$('ts-state').textContent='Checking…';await NAS.sync();renderTailscale();renderBanner()});
+async function renderBanner(){
+  const b=$('setup-banner'); const st=NAS.state; let msg='';
+  if(!NAS.configured())msg='Finish setting up: tap here and enter the NAS password.';
+  else if(NAS.isNative()&&(await tsInstalled())===false)msg='Tailscale is not installed. Tap here to set it up.';
+  else if(st.lastError&&!st.busy)msg=`Not reaching the NAS${st.queued?` – ${st.queued} waiting to send`:''}. Tap here to check Tailscale.`;
+  b.hidden=!msg; b.textContent=msg;
+}
+$('setup-banner').addEventListener('click',()=>document.querySelector('.tabs button[data-view="ops"]').click());
+NAS.onChange(()=>{renderBanner();if(!$('view-ops').hidden)renderTailscale()});
+document.querySelector('.tabs').addEventListener('click',e=>{const b=e.target.closest('button[data-view="ops"]');if(b)renderTailscale()});
+renderBanner();

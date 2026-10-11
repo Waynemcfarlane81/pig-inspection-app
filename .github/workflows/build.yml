@@ -26,6 +26,12 @@ jobs:
       - name: Install Capacitor
         run: npm install
 
+      - name: Add NAS password from secret
+        env:
+          NAS_PASSWORD: ${{ secrets.NAS_PASSWORD }}
+        run: |
+          node -e "const fs=require('fs');const f='www/config.js';const p=process.env.NAS_PASSWORD||'';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/pass: ''/,'pass: '+JSON.stringify(p)));console.log(p?'NAS password built in':'No NAS_PASSWORD secret – operatives will type it')"
+
       - name: Create Android project
         run: |
           npx cap add android

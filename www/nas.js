@@ -12,14 +12,17 @@ const NAS = (() => {
   const lsSet = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); return true } catch (e) { return false } };
 
   const native = () => window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Farm;
-  let cfg = lsGet('nas', { host: '', port: '5005', folder: 'PigReports', user: 'pigapp', pass: '' });
+  const DEF = Object.assign({ host: '', port: '5005', folder: 'PigReports', user: 'pigapp', pass: '' }, window.FARM_DEFAULTS || {});
+  let cfg = lsGet('nas', null) || { ...DEF };
+  // Fill gaps from the built-in details (e.g. a password typed later or built into a newer version)
+  for (const k of Object.keys(DEF)) if (!cfg[k] && DEF[k]) cfg[k] = DEF[k];
   let queue = lsGet('queue', []);          // [{key, method, path, body?, bodyBase64?, contentType}]
   let cache = lsGet('cache', { inspections: {}, movements: {}, settings: {} });
   let state = { busy: false, lastSync: lsGet('lastSync', 0), lastError: '', online: true };
   const listeners = [];
   let foldersMade = false;
 
-  const configured = () => !!(cfg.host && cfg.port && cfg.folder && cfg.user);
+  const configured = () => !!(cfg.host && cfg.port && cfg.folder && cfg.user && cfg.pass);
   const enc = p => p.split('/').map(encodeURIComponent).join('/');
   const baseUrl = () => `http://${cfg.host.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')}:${String(cfg.port).trim()}/${enc(cfg.folder.trim().replace(/^\/+|\/+$/g, ''))}`;
   const auth = () => 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`)));

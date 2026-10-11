@@ -100,6 +100,34 @@ public class FarmPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** Is another app (e.g. Tailscale) installed? */
+    @PluginMethod
+    public void appInstalled(PluginCall call) {
+        String pkg = call.getString("package", "");
+        boolean installed = getContext().getPackageManager().getLaunchIntentForPackage(pkg) != null;
+        JSObject ret = new JSObject();
+        ret.put("installed", installed);
+        call.resolve(ret);
+    }
+
+    /** Open another app, or its Play Store page if it isn't installed. */
+    @PluginMethod
+    public void openApp(PluginCall call) {
+        String pkg = call.getString("package", "");
+        boolean store = call.getBoolean("store", false);
+        Context ctx = getContext();
+        Intent i = store ? null : ctx.getPackageManager().getLaunchIntentForPackage(pkg);
+        if (i == null) {
+            i = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg));
+            if (i.resolveActivity(ctx.getPackageManager()) == null) {
+                i = new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + pkg));
+            }
+        }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        ctx.startActivity(i);
+        call.resolve();
+    }
+
     @PluginMethod
     public void openSettings(PluginCall call) {
         String kind = call.getString("kind", "permission");
