@@ -9,6 +9,10 @@ const CHECKS=[
   {k:'drinkersCleaned',n:'Drinkers cleaned'},
   {k:'autoFeed',n:'Auto feed system active',only:['shed1','shed2','shed3']},
   {k:'feedHopper',n:'Feed hopper checked'}];
+const WORKER=window.FARM_ROLE==='worker';
+/* Feed added is recorded for these areas only (sheds 1–3 run on the auto feed system) */
+const FEED_AREAS=['workshopR','workshopL','horseyard'];
+const hasFeed=k=>FEED_AREAS.includes(k);
 const checksFor=k=>CHECKS.filter(c=>!c.only||c.only.includes(k));
 const LEGACY_CHECK={beddingOk:'bedding',drinkersChecked:'water',autoFeed:'feedSystem'};
 const chk=(s,k)=>s[k]!==undefined?!!s[k]:!!s[LEGACY_CHECK[k]];
@@ -93,12 +97,12 @@ function freshForm(){
 const local={get:(k,d)=>NAS.lsGet(k,d),set:(k,v)=>NAS.lsSet(k,v)};
 const store={
   async addInspection(rec){return NAS.put('inspections',rec)},
-  async deleteInspection(id){NAS.remove('inspections',id)},
+  async deleteInspection(id){if(WORKER)return;NAS.remove('inspections',id)},
   async savePoisons(list){NAS.setSetting('poisons',list)},
   async saveOperatives(list){NAS.setSetting('operatives',list)},
   async saveSerials(list){NAS.setSetting('medications',list)},
-  async addMovement(m){NAS.put('movements',m)},
-  async deleteMovement(id){NAS.remove('movements',id)}
+  async addMovement(m){if(WORKER)return;NAS.put('movements',m)},
+  async deleteMovement(id){if(WORKER)return;NAS.remove('movements',id)}
 };
 const byNewest=(a,b)=>(b.date+(b.time||'')).localeCompare(a.date+(a.time||''))||((b.createdAt||0)-(a.createdAt||0));
 /* Reload everything from the local copy of the NAS data */
@@ -201,12 +205,12 @@ function renderLocs(){
           <input type="checkbox" id="${l.k}-${c.k}" data-f="${c.k}"${s[c.k]?' checked':''}>
           <label for="${l.k}-${c.k}"><span class="box">${TICK}</span>${c.n}</label></div>`).join('')}</div>
         <div class="row" style="margin-top:12px">
-          <div><label for="${l.k}-feedAdded">Feed added</label>
+          ${hasFeed(l.k)?`<div><label for="${l.k}-feedAdded">Feed added</label>
             <select id="${l.k}-feedAdded" data-f="feedAdded">
               <option value="">Select</option>
               <option${s.feedAdded==='Feed added'?' selected':''}>Feed added</option>
               <option${s.feedAdded==='No feed added'?' selected':''}>No feed added</option>
-            </select></div>
+            </select></div>`:''}
           <div class="dead"><label for="${l.k}-dead">Number of dead pigs</label>
             <select id="${l.k}-dead" data-f="dead" class="${s.dead!=='0'?'has':''}">${deadOptions(s.dead)}</select></div>
         </div>
@@ -222,6 +226,7 @@ function renderLocs(){
           ${s.medicated==='Yes'?`<button type="button" class="btn btn-quiet btn-add" data-addt="${l.k}">+ Add another medication</button>`:''}
           ${s.medicated==='Yes'&&!serials.length?'<div class="hint" style="margin-top:8px">No medications yet. Add them in the Medications tab.</div>':''}
         </div>
+        ${rodentAreaHtml(l)}
         <div style="margin-top:12px"><label for="${l.k}-notes" class="group-title" style="display:block;margin:0 0 4px">Notes</label>
           <textarea id="${l.k}-notes" data-f="notes" placeholder="Optional">${esc(s.notes)}</textarea></div>
       </div></article>`}).join('');
@@ -255,22 +260,22 @@ $('poison-list').addEventListener('click',async e=>{
   if(!confirm(`Remove ${poisons[+i]} from the list? Saved inspections keep it.`))return;
   try{await store.savePoisons(poisons.filter((_,j)=>j!==+i));toast('Poison removed')}catch(err){toast('Poison not removed. Try again.')}
 });
+function rodentAreaHtml(l){
+  const a=form.rodent.areas[l.k];
+  return `<div class="rod-area-box" data-rodarea="${l.k}">
+    <div class="group-title">Rodent control</div>
+    <div class="rod-row">
+      <div><label for="rb-${l.k}">Bait boxes checked</label><select id="rb-${l.k}" data-rb="${l.k}">${boxOptions(a.boxes)}</select></div>
+      <div class="check alert"><input type="checkbox" id="re-${l.k}" data-re="${l.k}"${a.evidence?' checked':''}><label for="re-${l.k}"><span class="box">${TICK}</span><span>Evidence of rodents</span></label></div>
+      <div class="check warn"><input type="checkbox" id="rr-${l.k}" data-rr="${l.k}"${a.restock?' checked':''}><label for="rr-${l.k}"><span class="box">${TICK}</span><span>Restock required</span></label></div>
+    </div></div>`;
+}
 function renderRodent(){
   const r=form.rodent;
-  const cb=(id,checked,label,extra='')=>`<div class="check ${extra}"><input type="checkbox" id="${id}"${checked?' checked':''}><label for="${id}"><span class="box">${TICK}</span>${label}</label></div>`;
   $('rodent').innerHTML=`<article class="loc rodent">
-    <div class="loc-head"><span class="tag tag-rodent">Rodent control</span><span class="loc-state" id="st-rodent">${rodentTotal(r)} bait boxes checked</span></div>
+    <div class="loc-head"><span class="tag tag-rodent">Rodent control – poison used</span><span class="loc-state" id="st-rodent">${rodentTotal(r)} bait boxes checked</span></div>
     <div class="loc-body">
-      <div class="rod-table" role="group" aria-label="Bait boxes by area">
-        <div class="rod-row rod-headrow"><span>Area</span><span>Bait boxes checked</span><span>Evidence</span><span>Restock</span></div>
-        ${LOCS.map(l=>{const a=r.areas[l.k];return `<div class="rod-row">
-          <span class="rod-area">${l.n}</span>
-          <select id="rb-${l.k}" data-rb="${l.k}" aria-label="${l.n} bait boxes checked">${boxOptions(a.boxes)}</select>
-          <div class="check alert"><input type="checkbox" id="re-${l.k}" data-re="${l.k}"${a.evidence?' checked':''}><label for="re-${l.k}"><span class="box">${TICK}</span><span>Evidence of rodents</span></label></div>
-          <div class="check warn"><input type="checkbox" id="rr-${l.k}" data-rr="${l.k}"${a.restock?' checked':''}><label for="rr-${l.k}"><span class="box">${TICK}</span><span>Restock required</span></label></div>
-        </div>`}).join('')}
-      </div>
-      <div class="group-title" style="margin-top:16px">Poison used</div>
+      <div class="hint" style="margin:0 0 10px">Bait boxes, evidence and restock are recorded in each area above.</div>
       <div class="row">
         <div><label for="rod-ptype">Poison type</label>
           <select id="rod-ptype"><option value="">Select type</option>${['Block','Grain'].map(t=>`<option${r.poisonType===t?' selected':''}>${t}</option>`).join('')}</select></div>
@@ -281,12 +286,18 @@ function renderRodent(){
         <textarea id="rod-notes" placeholder="Optional – e.g. where evidence was found">${esc(r.notes)}</textarea></div>
     </div></article>`;
 }
-$('rodent').addEventListener('input',e=>{
-  const r=form.rodent, t=e.target;
+function rodentInput(t){
+  const r=form.rodent;
   if(t.dataset.rb)r.areas[t.dataset.rb].boxes=t.value;
   else if(t.dataset.rr)r.areas[t.dataset.rr].restock=t.checked;
   else if(t.dataset.re){r.areas[t.dataset.re].evidence=t.checked;r.evidence=LOCS.some(l=>r.areas[l.k].evidence);}
-  else if(t.id==='rod-notes'){r.notes=t.value;return}
+  else return false;
+  const st=$('st-rodent'); if(st)st.textContent=`${rodentTotal(r)} bait boxes checked`; updateTotals();
+  return true;
+}
+$('rodent').addEventListener('input',e=>{
+  const r=form.rodent, t=e.target;
+  if(t.id==='rod-notes'){r.notes=t.value;return}
   else if(t.id==='rod-ptype'){r.poisonType=t.value;return}
   else if(t.id==='rod-pname'){r.poisonName=t.value;return}
   $('st-rodent').textContent=`${rodentTotal(r)} bait boxes checked`; updateTotals();
@@ -297,6 +308,7 @@ $('locs').addEventListener('click',e=>{
   if(rm){const s=form.locs[rm.dataset.rmt]; if(!confirm(`Remove medication ${+rm.dataset.ti+1} from this area?`))return; s.meds.splice(+rm.dataset.ti,1); renderLocs(); updateTotals();}
 });
 $('locs').addEventListener('input',e=>{
+  if(rodentInput(e.target))return;
   const card=e.target.closest('[data-loc]'); const f=e.target.dataset.f; if(!card||!f)return;
   const s=form.locs[card.dataset.loc];
   if(e.target.dataset.t!==undefined){const t=s.meds[+e.target.dataset.t]; if(f==='med'){const m=serials.find(x=>medLabel(x)===e.target.value);t.medName=m?m.name:'';t.serial=m?m.serial:'';t.useBy=m?m.useBy:''; if(m&&m.withdrawal!==''&&m.withdrawal!=null){t.withdrawal=String(m.withdrawal);const k=card.dataset.loc,ti=e.target.dataset.t,ws=$(`${k}-t${ti}-withdrawal`);if(ws){ws.innerHTML=wdOptions(t.withdrawal)}const wo=$(`${k}-t${ti}-wd`);if(wo)wo.innerHTML=wdHtml(form.date,t.withdrawal)} const inf=$(`${card.dataset.loc}-t${e.target.dataset.t}-info`); if(inf)inf.innerHTML=medInfoHtml(t)} else t[f]=e.target.value; if(f==='withdrawal'){const el=$(`${card.dataset.loc}-t${e.target.dataset.t}-wd`);if(el)el.innerHTML=wdHtml(form.date,t.withdrawal)} updateTotals(); return}
@@ -453,7 +465,7 @@ function reportText(h){
   LOCS.forEach(l=>{const s=(h.locs||{})[l.k]; if(!s)return;
     L.push('',`*${l.n}*`);
     L.push(checksFor(l.k).map(c=>c.warn?`${c.n}: ${chk(s,c.k)?'Yes ⚠️':'No'}`:`${c.n} ${t(chk(s,c.k))}`).join('  '));
-    L.push(`Feed: ${s.feedAdded||'not recorded'}`);
+    if(hasFeed(l.k)||s.feedAdded)L.push(`Feed: ${s.feedAdded||'not recorded'}`);
     L.push(`Dead pigs: ${s.dead||0}${+s.dead>0?' ⚠️':''}`);
     const ts=treats(s); if(ts.length){ts.forEach((t,i)=>{const m=medLabel({name:t.medName,serial:t.serial});L.push(`Medicated${ts.length>1?` (${i+1})`:''}: ${t.medCount||0} pigs${t.medDose?` × ${t.medDose} ml (${totalMl(t)} ml total)`:''} – ${m||'medication not recorded'}${t.useBy?` (use by ${fmtDate(t.useBy)})`:''}`);if(t.medReason)L.push(`Reason: ${t.medReason}`);if(markText(t))L.push(`Marked: ${markText(t)}`);if(t.withdrawal!==undefined&&t.withdrawal!==''){const e=wdEnd(h.date,t.withdrawal);L.push(+t.withdrawal===0?'Withdrawal: none':`Withdrawal: ${t.withdrawal} days – free from medication on ${fmtDate(e)}`)}})}
     else L.push('Medicated: No');
@@ -517,7 +529,7 @@ function renderHistory(){
     ${rodentHtml(h.rodent)}
     <div class="entry-actions"><button class="btn btn-wa" data-wa="${esc(h.id)}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" style="flex:none"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Send via WhatsApp</span></button>
     <button class="btn btn-quiet" data-pdf="${esc(h.id)}">Send PDF to NAS again</button>
-    ${canWrite?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
+    ${canWrite&&!WORKER?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
 }
 $('hist').addEventListener('click',async e=>{
   const wa=e.target.closest('[data-wa]'); if(wa){const h=history.find(x=>x.id===wa.dataset.wa); if(h)sendWhatsApp(h); return}
@@ -650,7 +662,7 @@ function renderPigs(){
       :e.type==='in'?`<b>+${e.qty}</b> pigs in to ${esc(areaName(e.area))}`
       :e.type==='dead'?`<b class="n">−${e.qty}</b> dead in ${esc(areaName(e.area))} <span class="med-sub">From inspection</span>`
       :`<b>−${e.qty}</b> ${e.type==='sold'?'sold from':'out of'} ${esc(areaName(e.area))}`;
-    return `<li><span>${what}<span class="med-sub">${fmtDate(e.date)}${e.by?' · '+esc(e.by):''}${e.note?' · '+esc(e.note):''}</span></span>${e.src==='mv'?`<button class="link-x" data-rmmv="${esc(e.id)}">Remove</button>`:''}</li>`}).join('')
+    return `<li><span>${what}<span class="med-sub">${fmtDate(e.date)}${e.by?' · '+esc(e.by):''}${e.note?' · '+esc(e.note):''}</span></span>${e.src==='mv'&&!WORKER?`<button class="link-x" data-rmmv="${esc(e.id)}">Remove</button>`:''}</li>`}).join('')
     :'<li style="color:var(--ink-2);font-weight:400">Nothing recorded yet. Start with a stock count for each area.</li>';
 }
 function fillMvForm(){
@@ -666,6 +678,7 @@ function mvTypeChanged(){
 }
 $('mv-type').addEventListener('change',mvTypeChanged);
 $('mv-save').addEventListener('click',async()=>{
+  if(WORKER)return;
   const err=$('mv-err'); err.hidden=true;
   const type=$('mv-type').value, area=$('mv-area').value, toArea=$('mv-to').value, qty=$('mv-qty').value.trim(), date=$('mv-date').value;
   if(!/^\d+$/.test(qty)||(type!=='count'&&+qty===0)){err.textContent='Enter the number of pigs.';err.hidden=false;$('mv-qty').focus();return}
@@ -678,7 +691,7 @@ $('mv-save').addEventListener('click',async()=>{
   toast(type==='count'?`${areaName(area)} set to ${qty} pigs`:'Saved');
 });
 $('mv-list').addEventListener('click',e=>{
-  const id=e.target.dataset.rmmv; if(!id)return;
+  const id=e.target.dataset.rmmv; if(!id||WORKER)return;
   if(!confirm('Remove this entry? Pig numbers will be worked out again without it.'))return;
   store.deleteMovement(id); toast('Entry removed');
 });
@@ -748,7 +761,7 @@ async function makeReportPdf(h){
     const pigs=h.stock&&h.stock[l.k]!=null?(+s.dead?`${h.stock[l.k]} -> ${h.stock[l.k]-(+s.dead)} pigs`:`${h.stock[l.k]} pigs`):'';
     text(`${l.n}${pigs?'   ('+pigs+')':''}`,{size:13,bold:true,color:green,gap:5});
     text(checksFor(l.k).map(c=>`${c.n}: ${chk(s,c.k)?'Yes':'No'}`).join('   ·   '),{size:9.5});
-    text(`Feed: ${s.feedAdded||'not recorded'}  ·  Dead pigs: ${s.dead||0}`,{size:9.5,bold:+s.dead>0,color:+s.dead>0?red:rgb(0,0,0)});
+    text(`${hasFeed(l.k)||s.feedAdded?`Feed: ${s.feedAdded||'not recorded'}  ·  `:''}Dead pigs: ${s.dead||0}`,{size:9.5,bold:+s.dead>0,color:+s.dead>0?red:rgb(0,0,0)});
     const ts=treats(s);
     if(ts.length)ts.forEach((t,i)=>{
       text(`Medication${ts.length>1?' '+(i+1):''}: ${medLabel({name:t.medName,serial:t.serial})||'not recorded'} – ${t.medCount||0} pigs × ${t.medDose||'?'} ml (${totalMl(t)} ml total)${t.useBy?`, use by ${fmtDate(t.useBy)}`:''}`,{size:9.5});
@@ -793,7 +806,8 @@ fillDetails(); renderLocs(); renderHistory(); renderSerials(); renderOperatives(
 NAS.onChange(refreshFromNas);
 NAS.onChange(()=>{const st=NAS.state; if(NAS.configured()&&st.lastSync&&!st.busy&&!st.lastError&&NAS.setting('operatives',undefined)===undefined)NAS.setSetting('operatives',DEFAULT_OPERATIVES)});
 setInterval(renderSyncState,30000);
-$('app-version').textContent=`Pig Inspection ${NAS.isNative()?'Android app':'(browser)'}`;
+$('app-version').textContent=`Pig Inspection ${WORKER?'– worker version':'– manager version'}${NAS.isNative()?'':' (browser)'}`;
+if(WORKER){$('mv-panel').hidden=true;$('pigs-hint').textContent='Dead pigs recorded in each saved inspection are taken off automatically. Only the manager can record stock counts, pigs in, moves and sales.'}
 NAS.sync();
 
 /* ---------- Setup banner ---------- */

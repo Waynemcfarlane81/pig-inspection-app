@@ -25,6 +25,15 @@ share one set of records. Nothing extra is installed on the phones.
 | `Reports/<year>/<year-month>/` | a PDF report for every inspection |
 | `Exports/` | CSV exports |
 
+## Worker and manager versions
+
+Every build makes two apps from the same code:
+
+- **PigInspection.apk** – worker version. Can't record, change or delete pig numbers, and can't delete inspections.
+- **PigInspection-Manager.apk** – full version.
+
+The only difference is `FARM_ROLE` in `www/config.js`.
+
 ## Building
 
 Every push to `main` builds the app on GitHub Actions. The `.apk` is attached to a

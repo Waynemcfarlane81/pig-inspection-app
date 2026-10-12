@@ -80,7 +80,8 @@ select:disabled{opacity:.5}
 .check.warn input:checked + label .box{background:#9A7400;border-color:#9A7400}
 .pill.loss{border-color:var(--loss)}
 .rod-table{display:grid;gap:8px}
-.rod-row{display:grid;grid-template-columns:1fr 0.9fr 1.3fr 1.2fr;gap:10px;align-items:center}
+.rod-area-box{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)}
+.rod-row{display:grid;grid-template-columns:1fr 1.2fr 1.2fr;gap:10px;align-items:end}
 .rod-headrow{font-size:14px;font-weight:600;color:var(--ink-2)}
 .rod-area{font-weight:700}
 .rod-row .check label{min-height:46px;padding:8px 10px}
@@ -261,8 +262,7 @@ th{color:var(--ink-2);font-weight:600}
   .pig-total b{font-size:34px}
   .sym-grid{grid-template-columns:1fr}
   .rod-row{grid-template-columns:1fr 1fr;row-gap:6px}
-  .rod-row .rod-area{grid-column:1/-1;margin-top:6px}
-  .rod-row select{grid-column:1/-1}
+  .rod-row > div:first-child{grid-column:1/-1}
   .rod-headrow{display:none}
   .tab-long{display:none}.tab-short{display:inline}
   .add-row{flex-direction:column}
@@ -335,10 +335,10 @@ th{color:var(--ink-2);font-weight:600}
   <section class="view" id="view-pigs" hidden>
     <div class="panel">
       <div class="pig-total"><span>Pigs on the farm</span><b id="pig-total">0</b></div>
-      <div class="hint">Dead pigs recorded in each saved inspection are taken off automatically.</div>
+      <div class="hint" id="pigs-hint">Dead pigs recorded in each saved inspection are taken off automatically.</div>
       <div id="pig-areas" class="pig-areas"></div>
     </div>
-    <div class="panel" style="margin-top:16px">
+    <div class="panel" style="margin-top:16px" id="mv-panel">
       <h2 class="h2">Record pig numbers</h2>
       <div class="sym-grid" style="margin-top:10px">
         <div class="span-all"><label for="mv-type">What happened</label>
