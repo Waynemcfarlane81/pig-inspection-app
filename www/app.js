@@ -686,14 +686,22 @@ $('mv-list').addEventListener('click',e=>{
 /* ---------- NAS settings ---------- */
 function fillNasForm(){
   const c=NAS.config;
-  $('nas-host').value=c.host||''; $('nas-port').value=c.port||'5005'; $('nas-folder').value=c.folder||'PigReports';
+  $('nas-host').value=c.host||''; $('nas-port').value=c.port||''; $('nas-folder').value=c.folder||'PigReports';
   $('nas-user').value=c.user||'pigapp'; $('nas-pass').value=c.pass||'';
 }
+$('nas-setup').addEventListener('input',()=>{
+  const t=$('nas-setup').value.trim(); if(!t)return;
+  try{const p=JSON.parse(t); if(p.t!=='pigapp-setup')throw 0;
+    $('nas-host').value=p.url||''; $('nas-port').value=p.port||''; $('nas-folder').value=p.folder||'PigReports';
+    $('nas-user').value=p.user||'pigapp'; if(p.pass)$('nas-pass').value=p.pass;
+    $('nas-setup').value=''; toast('Setup details filled in – tap Save and test connection');
+  }catch(e){}
+});
 $('nas-save').addEventListener('click',async()=>{
   const box=$('nas-result'); const host=$('nas-host').value.trim();
-  if(!host){box.hidden=false;box.className='nas-result bad';box.textContent='Enter the NAS Tailscale address (it starts 100.).';return}
+  if(!host){box.hidden=false;box.className='nas-result bad';box.textContent='Enter the NAS address, e.g. https://ugreen-nas.tailxxxx.ts.net';return}
   box.hidden=false; box.className='nas-result'; box.textContent='Testing the connection…'; $('nas-save').disabled=true;
-  const r=await NAS.test({host,port:$('nas-port').value.trim()||'5005',folder:$('nas-folder').value.trim()||'PigReports',user:$('nas-user').value.trim(),pass:$('nas-pass').value});
+  const r=await NAS.test({host,port:$('nas-port').value.trim(),folder:$('nas-folder').value.trim()||'PigReports',user:$('nas-user').value.trim(),pass:$('nas-pass').value});
   $('nas-save').disabled=false;
   box.className='nas-result '+(r.ok?'good':'bad'); box.textContent=r.ok?'Connected. Inspections will now be shared through the NAS.':r.msg;
   if(r.ok)NAS.sync();
@@ -788,26 +796,13 @@ setInterval(renderSyncState,30000);
 $('app-version').textContent=`Pig Inspection ${NAS.isNative()?'Android app':'(browser)'}`;
 NAS.sync();
 
-/* ---------- Tailscale helper and setup banner ---------- */
-const TS_PKG='com.tailscale.ipn';
-async function tsInstalled(){const n=NAS.native();if(!n||!n.appInstalled)return null;try{return (await n.appInstalled({package:TS_PKG})).installed}catch(e){return null}}
-async function renderTailscale(){
-  const box=$('ts-state'), btn=$('ts-open'); const inst=await tsInstalled(); const st=NAS.state;
-  if(inst===null){$('ts-panel').hidden=!NAS.isNative();return}
-  if(!inst){box.className='nas-result bad';box.textContent='Tailscale is not installed on this phone.';btn.textContent='Install Tailscale';btn.dataset.store='1'}
-  else if(NAS.configured()&&st.lastSync&&!st.lastError){box.className='nas-result good';box.textContent='Tailscale is working – the NAS can be reached.';btn.textContent='Open Tailscale';btn.dataset.store=''}
-  else{box.className='nas-result bad';box.textContent='Tailscale is installed but the NAS can\'t be reached. Open Tailscale, sign in and switch it on, then tap Check again.';btn.textContent='Open Tailscale';btn.dataset.store=''}
-}
-$('ts-open').addEventListener('click',()=>{const n=NAS.native();if(n&&n.openApp)n.openApp({package:TS_PKG,store:!!$('ts-open').dataset.store})});
-$('ts-recheck').addEventListener('click',async()=>{$('ts-state').className='nas-result';$('ts-state').textContent='Checking…';await NAS.sync();renderTailscale();renderBanner()});
-async function renderBanner(){
+/* ---------- Setup banner ---------- */
+function renderBanner(){
   const b=$('setup-banner'); const st=NAS.state; let msg='';
-  if(!NAS.configured())msg='Finish setting up: tap here and enter the NAS password.';
-  else if(NAS.isNative()&&(await tsInstalled())===false)msg='Tailscale is not installed. Tap here to set it up.';
-  else if(st.lastError&&!st.busy)msg=`Not reaching the NAS${st.queued?` – ${st.queued} waiting to send`:''}. Tap here to check Tailscale.`;
+  if(!NAS.configured())msg='Finish setting up: tap here and enter the NAS details.';
+  else if(st.lastError&&!st.busy)msg=`Not reaching the NAS${st.queued?` – ${st.queued} waiting to send, they'll go when there's signal`:''}. Tap here to check.`;
   b.hidden=!msg; b.textContent=msg;
 }
 $('setup-banner').addEventListener('click',()=>document.querySelector('.tabs button[data-view="ops"]').click());
-NAS.onChange(()=>{renderBanner();if(!$('view-ops').hidden)renderTailscale()});
-document.querySelector('.tabs').addEventListener('click',e=>{const b=e.target.closest('button[data-view="ops"]');if(b)renderTailscale()});
+NAS.onChange(renderBanner);
 renderBanner();

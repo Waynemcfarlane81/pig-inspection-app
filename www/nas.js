@@ -1,4 +1,4 @@
-/* ---------- NAS sync (WebDAV over Tailscale) ----------
+/* ---------- NAS sync (WebDAV over HTTPS, published by Tailscale Funnel on the NAS) ----------
    Layout on the NAS, inside the shared folder (e.g. PigReports):
      app-data/inspections/<id>.json   one file per inspection
      app-data/movements/<id>.json     one file per pig-number entry (count, in, out, sold, transfer)
@@ -16,15 +16,24 @@ const NAS = (() => {
   let cfg = lsGet('nas', null) || { ...DEF };
   // Fill gaps from the built-in details (e.g. a password typed later or built into a newer version)
   for (const k of Object.keys(DEF)) if (!cfg[k] && DEF[k]) cfg[k] = DEF[k];
+  // Phones set up for the old Tailscale address (100.x) move to the built-in public NAS address
+  if (/^https:\/\//i.test(DEF.host) && /^(https?:\/\/)?100\./.test(String(cfg.host || '').trim())) { cfg.host = DEF.host; cfg.port = DEF.port; }
   let queue = lsGet('queue', []);          // [{key, method, path, body?, bodyBase64?, contentType}]
   let cache = lsGet('cache', { inspections: {}, movements: {}, settings: {} });
   let state = { busy: false, lastSync: lsGet('lastSync', 0), lastError: '', online: true };
   const listeners = [];
   let foldersMade = false;
 
-  const configured = () => !!(cfg.host && cfg.port && cfg.folder && cfg.user && cfg.pass);
+  const isHttps = h => /^https:\/\//i.test(String(h || '').trim()) || /\.ts\.net(\/|:|$)/i.test(String(h || '').trim());
+  const configured = () => !!(cfg.host && (cfg.port || isHttps(cfg.host)) && cfg.folder && cfg.user && cfg.pass);
   const enc = p => p.split('/').map(encodeURIComponent).join('/');
-  const baseUrl = () => `http://${cfg.host.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')}:${String(cfg.port).trim()}/${enc(cfg.folder.trim().replace(/^\/+|\/+$/g, ''))}`;
+  const baseUrl = () => {
+    const host = cfg.host.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+    const port = String(cfg.port || '').trim();
+    const folder = enc(cfg.folder.trim().replace(/^\/+|\/+$/g, ''));
+    if (isHttps(cfg.host)) return `https://${host}${port && port !== '443' ? ':' + port : ''}/${folder}`;
+    return `http://${host}:${port || '5005'}/${folder}`;
+  };
   const auth = () => 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`)));
 
   async function request(method, path, opts = {}) {
@@ -53,8 +62,8 @@ const NAS = (() => {
   function netExplain(e) {
     const m = String(e && e.message || e || '');
     if (/refused/i.test(m)) return 'Connection refused – WebDAV is off on the NAS, or the port is wrong.';
-    if (/timeout|timed out|unreachable|failed to connect|resolve/i.test(m)) return 'Can\'t reach the NAS – check Tailscale is switched on and the server address is right.';
-    return 'Can\'t reach the NAS – check Tailscale is on. (' + m + ')';
+    if (/timeout|timed out|unreachable|failed to connect|resolve/i.test(m)) return 'Can\'t reach the NAS – check the phone has signal or Wi-Fi and the server address is right.';
+    return 'Can\'t reach the NAS – check the phone has signal or Wi-Fi. (' + m + ')';
   }
 
   async function ensureFolders() {

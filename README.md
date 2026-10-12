@@ -1,7 +1,8 @@
 # Pig Inspection – Android app
 
 Daily pig inspection app for the farm. Every phone saves to the UGREEN NAS over
-WebDAV (through Tailscale), so all operatives share one set of records.
+WebDAV over HTTPS (published by Tailscale Funnel running on the NAS), so all operatives
+share one set of records. Nothing extra is installed on the phones.
 
 ## What it does
 
@@ -31,7 +32,7 @@ new release under **Releases**. To install it, open it on the phone. To update, 
 the newer `.apk` over the top; data on the phone and the NAS is kept.
 
 The build does `npx cap add android`, then `android-custom/apply.sh` adds the native
-WebDAV/location plugin, allows plain HTTP to the NAS (Tailscale encrypts it), and signs
+WebDAV/location plugin, allows plain HTTP for a NAS on the local network, and signs
 the app with `keystore/debug.keystore`. Every build uses that same key so updates install cleanly.
 
 The web app is `www/`. It's plain HTML/JS with no build step. To test it in a browser,

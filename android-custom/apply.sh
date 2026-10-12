@@ -12,17 +12,12 @@ mkdir -p "$PKG_DIR"
 cp android-custom/MainActivity.java "$PKG_DIR/MainActivity.java"
 cp android-custom/FarmPlugin.java "$PKG_DIR/FarmPlugin.java"
 
-# Allow plain HTTP to the NAS (traffic is already encrypted by Tailscale) and ask for location.
+# Allow plain HTTP for a NAS on the local network (the normal route is HTTPS) and ask for location.
 if ! grep -q usesCleartextTraffic "$MANIFEST"; then
   sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
 fi
 if ! grep -q ACCESS_FINE_LOCATION "$MANIFEST"; then
   sed -i 's#</manifest>#    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n</manifest>#' "$MANIFEST"
-fi
-
-# Let the app see whether Tailscale is installed (Android 11+ package visibility).
-if ! grep -q com.tailscale.ipn "$MANIFEST"; then
-  sed -i 's#<application#<queries>\n        <package android:name="com.tailscale.ipn" />\n    </queries>\n\n    <application#' "$MANIFEST"
 fi
 
 # Version number goes up with every build so phones accept the update.

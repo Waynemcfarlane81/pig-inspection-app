@@ -252,8 +252,6 @@ th{color:var(--ink-2);font-weight:600}
 .hb-bar{display:block;height:100%;border-radius:0 4px 4px 0}
 .hb-v{color:var(--ink-2);white-space:nowrap}
 .entry-actions .btn-quiet{min-height:44px}
-.ts-btns{display:flex;gap:10px;margin-top:10px}
-.ts-btns .btn{flex:1}
 .setup-banner{background:var(--loss-bg);color:var(--loss);border:1px solid var(--loss);border-radius:10px;padding:12px 14px;margin-bottom:12px;font-weight:600;cursor:pointer}
 
 @media (max-width:520px){
@@ -386,21 +384,16 @@ th{color:var(--ink-2);font-weight:600}
 
   <!-- SETTINGS -->
   <section class="view" id="view-ops" hidden>
-    <div class="panel" id="ts-panel" style="margin-bottom:16px">
-      <h2 class="h2">Tailscale</h2>
-      <div class="hint">Tailscale links this phone to the NAS. It must be installed, signed in and switched on.</div>
-      <div id="ts-state" class="nas-result" style="margin-top:10px"></div>
-      <div class="ts-btns"><button class="btn btn-primary" id="ts-open">Open Tailscale</button><button class="btn btn-quiet" id="ts-recheck">Check again</button></div>
-    </div>
     <div class="panel">
       <h2 class="h2">Connection to the NAS</h2>
-      <div class="hint">Inspections, pig numbers and the lists below are shared with every phone through the NAS. Tailscale must be switched on.</div>
+      <div class="hint">Inspections, pig numbers and the lists below are shared with every phone through the NAS. It works on Wi-Fi or mobile data – nothing else needs installing.</div>
       <div class="sym-grid" style="margin-top:10px">
-        <div><label for="nas-host">Server address</label><input type="text" id="nas-host" placeholder="100.x.x.x" autocomplete="off" inputmode="decimal" autocapitalize="off" spellcheck="false"></div>
-        <div><label for="nas-port">Port</label><input type="number" id="nas-port" placeholder="5005" inputmode="numeric"></div>
+        <div><label for="nas-host">Server address</label><input type="text" id="nas-host" placeholder="https://ugreen-nas….ts.net" autocomplete="off" inputmode="url" autocapitalize="off" spellcheck="false"></div>
+        <div><label for="nas-port">Port</label><input type="number" id="nas-port" placeholder="blank for https" inputmode="numeric"></div>
         <div class="span-all"><label for="nas-folder">Folder</label><input type="text" id="nas-folder" placeholder="PigReports" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
         <div><label for="nas-user">Username</label><input type="text" id="nas-user" placeholder="pigapp" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
         <div><label for="nas-pass">Password</label><input type="password" id="nas-pass" autocomplete="off"></div>
+        <div class="span-all"><label for="nas-setup">Or paste setup text</label><textarea id="nas-setup" rows="2" placeholder="Paste the text from the setup card (scan the QR code with the phone camera, then copy)" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%;font:inherit"></textarea></div>
         <button class="btn btn-primary span-all" id="nas-save">Save and test connection</button>
       </div>
       <div id="nas-result" class="nas-result" hidden></div>
