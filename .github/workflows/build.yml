@@ -48,6 +48,8 @@ jobs:
         run: |
           mkdir -p out
           cp android/app/build/outputs/apk/debug/app-debug.apk "out/PigInspection-v2.0.${{ github.run_number }}.apk"
+          # Same name every release, so .../releases/latest/download/PigInspection.apk (the download QR code) is always the newest
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/PigInspection.apk
 
       - name: Keep APK with this run
         uses: actions/upload-artifact@v4
