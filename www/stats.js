@@ -9,10 +9,13 @@
   const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const shortDate=iso=>{const[,m,d]=iso.split('-');return `${+d} ${MONTHS[+m-1]}`};
 
-  function fillAreaSelect(){
-    const sel=$('st-area'); if(sel.options.length)return;
-    sel.innerHTML='<option value="all">All areas</option>'+LOCS.map(l=>`<option value="${l.k}">${l.n}</option>`).join('');
+  function fillAreaSelect(force){
+    const sel=$('st-area'); if(sel.options.length&&!force)return;
+    const cur=sel.value;
+    sel.innerHTML='<option value="all">All areas</option>'+LOCS.map(l=>`<option value="${l.k}">${esc(l.n)}</option>`).join('');
+    sel.value=LOCS.some(l=>l.k===cur)?cur:'all';
   }
+  window.fillStatsAreas=()=>fillAreaSelect(true);
 
   /* Daily pig numbers (end of each day) for the chosen areas, in one pass over the events */
   function dailyStock(start,end,keys){
@@ -20,7 +23,7 @@
     const out={}; let i=0;
     for(let d=start; d<=end; d=isoAdd(d,1)){
       const lim=`${d}T23:59|999999999999999`;
-      while(i<ev.length&&evKey(ev[i])<=lim){const e=ev[i++],q=+e.qty||0;
+      while(i<ev.length&&evKey(ev[i])<=lim){const e=ev[i++],q=+e.qty||0; if(!(e.area in s))s[e.area]=0;
         if(e.type==='count')s[e.area]=q; else if(e.type==='in')s[e.area]+=q;
         else if(e.type==='transfer'){s[e.area]-=q;if(e.toArea in s)s[e.toArea]+=q} else s[e.area]-=q}
       out[d]={total:keys.reduce((a,k)=>a+Math.max(0,s[k]),0),byArea:Object.fromEntries(keys.map(k=>[k,Math.max(0,s[k])]))};
@@ -71,7 +74,7 @@
           const r=t.medReason||'Not recorded'; reasons[r]=(reasons[r]||0)+c;
           const mn=t.medName||t.serial||'Not recorded'; const m=medicines[mn]||(medicines[mn]={pigs:0,ml:0}); m.pigs+=c; m.ml+=totalMl(t);
         }
-        const di=doneItems(k,s); const f=di.filter(Boolean).length/di.length;
+        const di=doneItems(k,s,h); const f=di.filter(Boolean).length/di.length;
         doneSum+=f; doneN++; area[k].done+=f; area[k].checks++; op.done+=f; op.checks++;
         if(h.rodent&&h.rodent.areas&&(h.rodent.areas[k]||{}).evidence){area[k].rodent++;rodentHere=true}
       }

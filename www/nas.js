@@ -2,7 +2,7 @@
    Layout on the NAS, inside the shared folder (e.g. PigReports):
      app-data/inspections/<id>.json   one file per inspection
      app-data/movements/<id>.json     one file per pig-number entry (count, in, out, sold, transfer)
-     app-data/settings/<name>.json    shared lists: operatives, medications, poisons
+     app-data/settings/<name>.json    shared lists: accounts (who is admin/user + PIN), areas (sheds and equipment), operatives, medications, poisons
      Reports/<yyyy>/<yyyy-mm>/<date time - name>.pdf
      Exports/pig-inspections-<date>.csv
    Everything is cached on the phone, so the app works with no signal; changes queue and send later. */
@@ -20,7 +20,7 @@ const NAS = (() => {
   if (/^https:\/\//i.test(DEF.host) && /^(https?:\/\/)?100\./.test(String(cfg.host || '').trim())) { cfg.host = DEF.host; cfg.port = DEF.port; }
   let queue = lsGet('queue', []);          // [{key, method, path, body?, bodyBase64?, contentType}]
   let cache = lsGet('cache', { inspections: {}, movements: {}, settings: {} });
-  let state = { busy: false, lastSync: lsGet('lastSync', 0), lastError: '', online: true };
+  let state = { busy: false, lastSync: lsGet('lastSync', 0), lastError: '', online: true, pulled: false };  // pulled: settings fetched from the NAS since the app opened
   const listeners = [];
   let foldersMade = false;
 
@@ -137,7 +137,7 @@ const NAS = (() => {
     }
   }
   async function pullSettings() {
-    for (const name of ['operatives', 'medications', 'poisons']) {
+    for (const name of ['accounts', 'areas', 'operatives', 'medications', 'poisons']) {
       if (queue.some(q => q.key === 'settings/' + name)) continue;   // our own change hasn't gone yet
       const r = await request('GET', `app-data/settings/${name}.json`);
       if (r.status === 200) { try { cache.settings[name] = JSON.parse(r.body) } catch (e) { } }
@@ -153,6 +153,7 @@ const NAS = (() => {
       await pullCollection('inspections');
       await pullCollection('movements');
       await pullSettings();
+      state.pulled = true;
       saveCache();
       state.lastSync = Date.now(); lsSet('lastSync', state.lastSync); state.lastError = ''; state.online = true;
     } catch (e) {

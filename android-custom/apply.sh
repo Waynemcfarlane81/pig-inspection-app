@@ -20,6 +20,11 @@ if ! grep -q ACCESS_FINE_LOCATION "$MANIFEST"; then
   sed -i 's#</manifest>#    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n</manifest>#' "$MANIFEST"
 fi
 
+# Camera, for the photo buttons beside each tick box (Capacitor asks for it the first time)
+if ! grep -q android.permission.CAMERA "$MANIFEST"; then
+  sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n</manifest>#' "$MANIFEST"
+fi
+
 # Version number goes up with every build so phones accept the update.
 sed -i -E "s/versionCode [0-9]+/versionCode ${BUILD_NO}/" "$GRADLE"
 sed -i -E "s/versionName \"[^\"]*\"/versionName \"2.0.${BUILD_NO}\"/" "$GRADLE"

@@ -1,28 +1,57 @@
-const LOCS=[
-  {k:'shed1',n:'Shed 1'},{k:'shed2',n:'Shed 2'},{k:'shed3',n:'Shed 3'},
-  {k:'workshopR',n:'Workshop right'},{k:'workshopL',n:'Workshop left'},{k:'horseyard',n:'Horse yard'}
-];
+/* ---------- Sheds / areas and their equipment ----------
+   Set by an admin in Settings → Farm setup and stored on the NAS (app-data/settings/areas.json).
+   The tick boxes for each area come from its equipment. Each saved inspection keeps a copy of the
+   layout it was made with (rec.layout), so old reports still show the checks that were done. */
+const EQUIP=[
+  {k:'autoFeed',n:'Auto feed system'},{k:'manualFeed',n:'Manual feeders'},
+  {k:'trough',n:'Trough drinkers'},{k:'nipple',n:'Nipple drinkers'}];
+/* Every check that can appear, in display order */
 const CHECKS=[
   {k:'beddingOk',n:'Bedding OK'},
   {k:'beddingReq',n:'Bedding required',warn:true},
   {k:'drinkersChecked',n:'Drinkers checked'},
   {k:'drinkersCleaned',n:'Drinkers cleaned'},
-  {k:'autoFeed',n:'Auto feed system active',only:['shed1','shed2','shed3']},
+  {k:'nipplesOk',n:'Nipples operational'},
+  {k:'autoFeed',n:'Auto feed system active'},
   {k:'feedHopper',n:'Feed hopper checked'}];
-const WORKER=window.FARM_ROLE==='worker';
-/* Feed added is recorded for these areas only (sheds 1–3 run on the auto feed system) */
-const FEED_AREAS=['workshopR','workshopL','horseyard'];
-const hasFeed=k=>FEED_AREAS.includes(k);
-const checksFor=k=>CHECKS.filter(c=>!c.only||c.only.includes(k));
+const DEFAULT_AREAS=[
+  {k:'shed1',n:'Shed 1',equip:{autoFeed:true,trough:true}},{k:'shed2',n:'Shed 2',equip:{autoFeed:true,trough:true}},{k:'shed3',n:'Shed 3',equip:{autoFeed:true,trough:true}},
+  {k:'workshopR',n:'Workshop right',equip:{manualFeed:true,trough:true}},{k:'workshopL',n:'Workshop left',equip:{manualFeed:true,trough:true}},{k:'horseyard',n:'Horse yard',equip:{manualFeed:true,trough:true}}];
+let ALL_AREAS=DEFAULT_AREAS;      // includes removed areas, so old records keep their names
+const LOCS=[];                    // areas in use now (same array object throughout, updated in place)
+function checkKeysFor(eq){eq=eq||{};const c=['beddingOk','beddingReq'];
+  if(eq.trough||eq.nipple)c.push('drinkersChecked');
+  if(eq.trough)c.push('drinkersCleaned');
+  if(eq.nipple)c.push('nipplesOk');
+  if(eq.autoFeed)c.push('autoFeed');
+  if(eq.autoFeed||eq.manualFeed)c.push('feedHopper');
+  return c}
+const areaDef=k=>ALL_AREAS.find(a=>a.k===k)||{k,n:k,equip:{}};
+function setAreas(list){
+  ALL_AREAS=Array.isArray(list)&&list.length?list:DEFAULT_AREAS;
+  LOCS.splice(0,LOCS.length,...ALL_AREAS.filter(a=>!a.removed));
+}
+setAreas(null);
+const layoutNow=()=>{const o={};LOCS.forEach(l=>o[l.k]={n:l.n,checks:checkKeysFor(l.equip),feed:!!(l.equip||{}).manualFeed});return o};
+/* Checks and feed for an area – for a saved record (h) when given, otherwise as set up now */
+const lay=(k,h)=>h&&h.layout&&h.layout[k]?h.layout[k]:{n:areaDef(k).n,checks:checkKeysFor(areaDef(k).equip),feed:!!(areaDef(k).equip||{}).manualFeed};
+const checksFor=(k,h)=>{const ks=lay(k,h).checks;return CHECKS.filter(c=>ks.includes(c.k))};
+const hasFeed=(k,h)=>lay(k,h).feed;
+/* Areas recorded in a saved inspection, in farm order */
+const recLocs=h=>{const ks=Object.keys((h&&h.locs)||{});const known=ALL_AREAS.filter(a=>ks.includes(a.k)).map(a=>({k:a.k,n:h.layout&&h.layout[a.k]?h.layout[a.k].n:a.n}));
+  return known.concat(ks.filter(k=>!ALL_AREAS.some(a=>a.k===k)).map(k=>({k,n:lay(k,h).n})))};
 const LEGACY_CHECK={beddingOk:'bedding',drinkersChecked:'water',autoFeed:'feedSystem'};
 const chk=(s,k)=>s[k]!==undefined?!!s[k]:!!s[LEGACY_CHECK[k]];
-/* Items that make an area "fully checked": bedding (OK or required), drinkers checked, auto feed (sheds), feed hopper */
-const doneItems=(k,s)=>[chk(s,'beddingOk')||chk(s,'beddingReq'),chk(s,'drinkersChecked'),...(checksFor(k).some(c=>c.k==='autoFeed')?[chk(s,'autoFeed')]:[]),chk(s,'feedHopper')];
+/* Items that make an area "fully checked": bedding (OK or required) plus every other check except "drinkers cleaned" */
+const doneItems=(k,s,h)=>{const ks=lay(k,h).checks;return [chk(s,'beddingOk')||chk(s,'beddingReq'),...ks.filter(c=>!['beddingOk','beddingReq','drinkersCleaned'].includes(c)).map(c=>chk(s,c))]};
 const TICK='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 let serials=[]; let operatives=[]; let poisons=[]; let history=[]; let canWrite=true;
+/* Who is signed in on this phone, and the users list from the NAS ({name:{role:'admin'|'user',pin:'<hash>'}}) */
+let me=null; let accounts=null; let farmDraft=null, farmDirty=false;
+const isAdmin=()=>!!me&&me.role==='admin';
 function blankLoc(){return {beddingOk:false,beddingReq:false,drinkersChecked:false,drinkersCleaned:false,autoFeed:false,feedHopper:false,feedAdded:'',dead:'0',medicated:'No',meds:[],notes:''}}
 function blankTreat(){return {medCount:'0',medDose:'',withdrawal:'',medName:'',serial:'',useBy:'',markColour:'',markType:'',medReason:''}}
 const treats=s=>s.medicated!=='Yes'?[]:(Array.isArray(s.meds)?s.meds:[s]);
@@ -81,7 +110,23 @@ const SYMPTOMS=[
 const SIZES=[['Newborn piglet (3–5 days)',2],['Suckling piglet',5],['Weaner',15],['Grower',45],['Finisher',90],['Sow or boar',220]];
 const fmtMl=v=>v<1?String(+v.toFixed(2)):String(+v.toFixed(1));
 const findRef=name=>{const n=String(name||'').toLowerCase().trim(); if(n.length<3)return null; return MED_REF.find(r=>r.k.some(k=>n.includes(k)||k.includes(n)))||null};
-const normMeds=list=>(Array.isArray(list)?list:[]).map(x=>typeof x==='string'?{name:'',serial:x,useBy:'',withdrawal:'',usedFor:'',refSrc:''}:{name:x.name||'',serial:x.serial||'',useBy:x.useBy||'',withdrawal:x.withdrawal??'',usedFor:x.usedFor||'',refSrc:x.refSrc||''});
+const normMeds=list=>(Array.isArray(list)?list:[]).map(x=>typeof x==='string'?{name:'',serial:x,useBy:'',withdrawal:'',usedFor:'',refSrc:''}:{name:x.name||'',serial:x.serial||'',useBy:x.useBy||'',withdrawal:x.withdrawal??'',usedFor:x.usedFor||'',refSrc:x.refSrc||'',bottleMl:x.bottleMl??'',bottles:x.bottles??'',addedAt:x.addedAt||0});
+/* ---------- Medication stock in ml ----------
+   Stock = bottle size × number of bottles. Every saved inspection that used this medication (same name and
+   serial / batch number, saved after it was added) takes its total ml off. */
+const hasStock=m=>+m.bottleMl>0&&+m.bottles>0;
+const stockTotal=m=>hasStock(m)?+(+m.bottleMl*+m.bottles).toFixed(1):0;
+function mlUsed(m,exceptId){let u=0;history.forEach(h=>{if(h.id===exceptId||(m.addedAt&&(h.createdAt||0)<m.addedAt))return;
+  Object.values(h.locs||{}).forEach(s=>treats(s).forEach(t=>{if(t.medName===m.name&&t.serial===m.serial)u+=totalMl(t)}))});return +u.toFixed(1)}
+const mlLeft=m=>+(stockTotal(m)-mlUsed(m)).toFixed(1);
+const fmtL=v=>`${+(+v).toFixed(1)} ml`;
+function stockHtml(m){
+  if(!hasStock(m))return '<span class="med-sub">Stock: not set</span>';
+  const tot=stockTotal(m), used=mlUsed(m), left=+(tot-used).toFixed(1), low=left<=tot*0.2;
+  const bl=+(left/+m.bottleMl).toFixed(1);
+  return `<span class="med-sub">Stock: ${esc(m.bottles)} × ${esc(m.bottleMl)} ml bottles = ${fmtL(tot)} · used ${fmtL(used)}</span>
+    <span class="stock-line ${left<=0?'low':low?'low':'ok'}">${left<=0?`None left${left<0?` (${fmtL(-left)} more used than in stock)`:''}`:`${fmtL(left)} left – about ${bl} bottle${bl===1?'':'s'}`}${left>0&&low?' – running low':''}</span>`;
+}
 function todayISO(){const d=new Date(),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`}
 function useByState(d){if(!d)return null;const days=Math.round((new Date(d+'T00:00:00')-new Date(todayISO()+'T00:00:00'))/864e5);
   if(days<0)return {cls:'ub-bad',txt:`Expired on ${fmtDate(d)}`};if(days<=30)return {cls:'ub-warn',txt:`Use within ${days} day${days===1?'':'s'} (by ${fmtDate(d)})`};return {cls:'ub-ok',txt:`In date until ${fmtDate(d)}`}}
@@ -89,7 +134,7 @@ let form=freshForm();
 function blankRodent(){const a={};LOCS.forEach(l=>a[l.k]={boxes:'0',evidence:false,restock:false});return {areas:a,evidence:false,poisonType:'',poisonName:'',notes:''}}
 function freshForm(){
   const d=new Date(); const pad=n=>String(n).padStart(2,'0');
-  const f={name:'',date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`,time:`${pad(d.getHours())}:${pad(d.getMinutes())}`,locs:{},rodent:blankRodent()};
+  const f={photos:[],name:'',date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`,time:`${pad(d.getHours())}:${pad(d.getMinutes())}`,locs:{},rodent:blankRodent()};
   LOCS.forEach(l=>f.locs[l.k]=blankLoc()); return f;
 }
 
@@ -97,21 +142,24 @@ function freshForm(){
 const local={get:(k,d)=>NAS.lsGet(k,d),set:(k,v)=>NAS.lsSet(k,v)};
 const store={
   async addInspection(rec){return NAS.put('inspections',rec)},
-  async deleteInspection(id){if(WORKER)return;NAS.remove('inspections',id)},
-  async savePoisons(list){NAS.setSetting('poisons',list)},
-  async saveOperatives(list){NAS.setSetting('operatives',list)},
-  async saveSerials(list){NAS.setSetting('medications',list)},
-  async addMovement(m){if(WORKER)return;NAS.put('movements',m)},
-  async deleteMovement(id){if(WORKER)return;NAS.remove('movements',id)}
+  /* Admin only: the buttons are hidden for users, and these refuse as well */
+  async deleteInspection(id){if(!isAdmin())return;NAS.remove('inspections',id)},
+  async savePoisons(list){if(!isAdmin())throw new Error('Admin only');NAS.setSetting('poisons',list)},
+  async saveSerials(list){if(!isAdmin())throw new Error('Admin only');NAS.setSetting('medications',list)},
+  async saveAccounts(acc){if(!isAdmin())throw new Error('Admin only');writeAccounts(acc)},
+  async addMovement(m){if(!isAdmin())return;NAS.put('movements',m)},
+  async deleteMovement(id){if(!isAdmin())return;NAS.remove('movements',id)}
 };
 const byNewest=(a,b)=>(b.date+(b.time||'')).localeCompare(a.date+(a.time||''))||((b.createdAt||0)-(a.createdAt||0));
 /* Reload everything from the local copy of the NAS data */
 function loadFromNas(){
   history=NAS.inspections().sort(byNewest);
   movements=NAS.movements();
-  operatives=NAS.setting('operatives',DEFAULT_OPERATIVES).filter(x=>typeof x==='string');
+  const acc=NAS.setting('accounts',null); accounts=acc&&typeof acc==='object'&&!Array.isArray(acc)?acc:null;
+  operatives=accounts?Object.keys(accounts).sort((a,b)=>a.localeCompare(b)):NAS.setting('operatives',DEFAULT_OPERATIVES).filter(x=>typeof x==='string');
   poisons=NAS.setting('poisons',[]).filter(x=>typeof x==='string');
   serials=normMeds(NAS.setting('medications',[]));
+  setAreas(NAS.setting('areas',null));
 }
 
 /* ---------- Pig numbers ----------
@@ -123,7 +171,7 @@ const evKey=e=>`${e.date}T${e.time||'23:59'}|${String(e.createdAt||0).padStart(1
 function stockEvents(excludeInspId){
   const ev=[];
   movements.forEach(m=>ev.push({...m,src:'mv'}));
-  history.forEach(h=>{if(h.id===excludeInspId)return; LOCS.forEach(l=>{const d=+((h.locs||{})[l.k]||{}).dead||0; if(d)ev.push({type:'dead',area:l.k,qty:d,date:h.date,time:h.time,createdAt:h.createdAt,by:h.name,src:'insp',inspId:h.id})})});
+  history.forEach(h=>{if(h.id===excludeInspId)return; recLocs(h).forEach(l=>{const d=+((h.locs||{})[l.k]||{}).dead||0; if(d)ev.push({type:'dead',area:l.k,qty:d,date:h.date,time:h.time,createdAt:h.createdAt,by:h.name,src:'insp',inspId:h.id})})});
   return ev.sort((a,b)=>evKey(a)<evKey(b)?-1:1);
 }
 /* Pig numbers per area, optionally only counting events up to a date/time (inclusive) */
@@ -132,6 +180,7 @@ function stockAt(until,excludeInspId){
   for(const e of stockEvents(excludeInspId)){
     if(until&&evKey(e)>until)break;
     const q=+e.qty||0;
+    if(!(e.area in s))s[e.area]=0; if(e.toArea&&!(e.toArea in s))s[e.toArea]=0;   // areas since removed
     if(e.type==='count')s[e.area]=q;
     else if(e.type==='in')s[e.area]+=q;
     else if(e.type==='transfer'){s[e.area]-=q; if(e.toArea in s)s[e.toArea]+=q}
@@ -140,7 +189,7 @@ function stockAt(until,excludeInspId){
   return s;
 }
 const stockNow=()=>stockAt(null);
-const areaName=k=>(LOCS.find(l=>l.k===k)||{n:k}).n;
+const areaName=k=>areaDef(k).n;
 
 /* ---------- Inspection form ---------- */
 function countOptions(sel,max){let o='';for(let i=0;i<=max;i++)o+=`<option value="${i}"${String(i)===sel?' selected':''}>${i}</option>`;return o}
@@ -158,6 +207,32 @@ const MARK_COLOURS=['Red','Blue','Green','Orange','Purple','Yellow','Black','Pin
 const COLOUR_DOT={Red:'🔴',Blue:'🔵',Green:'🟢',Orange:'🟠',Purple:'🟣',Yellow:'🟡',Black:'⚫'};
 const MARK_TYPES=['Spot','Line / stripe','Cross','Circle','Number','Shoulder mark','Back mark','Rump mark','Other'];
 const MED_REASONS=['Lameness','Respiratory / coughing','Scour / diarrhoea','Skin condition','Injury / wound','Tail bite','Ear bite','Abscess','Fever','Joint ill','Parasites / worms','Prevention / routine','Other'];
+/* Medication reasons matched against what the medicine is used for (its "used for" text, the reference list,
+   and the symptoms guide). Only matching reasons are offered; "Other" is always there. */
+const REASON_WORDS={
+ 'Lameness':['lame','joint','arthritis','foot','leg'],
+ 'Respiratory / coughing':['respirat','pneumon','cough','rhinitis','pasteurel','actinobac','mycoplasma','breath','lung'],
+ 'Scour / diarrhoea':['scour','diarrh','coccid','gut','enteric','enteritis','dysentery','e. coli'],
+ 'Skin condition':['skin','erysipelas','mange','lice','dermat'],
+ 'Injury / wound':['wound','injur','soft-tissue','soft tissue','cellulitis','secondary infection'],
+ 'Tail bite':['wound','bite','soft-tissue','soft tissue','cellulitis'],
+ 'Ear bite':['wound','bite','ear','soft-tissue','soft tissue','cellulitis'],
+ 'Abscess':['abscess','soft-tissue','soft tissue','cellulitis','wound'],
+ 'Fever':['fever','septic','inflamm','mma'],
+ 'Joint ill':['joint'],
+ 'Parasites / worms':['worm','parasit','mange','lice','mite'],
+ 'Prevention / routine':['prevent','coccid','routine']};
+function reasonsFor(t){
+  const m=serials.find(x=>x.name===t.medName&&x.serial===t.serial);
+  const name=m?m.name:t.medName; if(!name&&!m)return MED_REASONS;
+  const ref=findRef(name);
+  const syms=ref?SYMPTOMS.filter(y=>y.meds.includes(ref.name)).map(y=>y.n).join(' '):'';
+  const text=[(m&&m.usedFor)||'',ref?ref.use:'',syms].join(' ').toLowerCase();
+  if(!text.trim())return MED_REASONS;
+  const list=MED_REASONS.filter(r=>r==='Other'||(REASON_WORDS[r]||[]).some(w=>text.includes(w)));
+  return list.length>1?list:MED_REASONS;
+}
+function reasonHint(t){const r=reasonsFor(t);return r.length<MED_REASONS.length&&t.medName?`Reasons that match what ${t.medName} is used for`:''}
 function listOptions(list,sel,ph,fmt=x=>x){let o=`<option value="">${ph}</option>`;list.forEach(v=>o+=`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(fmt(v))}</option>`);if(sel&&!list.includes(sel))o+=`<option selected value="${esc(sel)}">${esc(sel)}</option>`;return o}
 const markText=s=>[s.markColour,s.markType?s.markType.toLowerCase():''].filter(Boolean).join(' ');
 const WD_DAYS=(()=>{const a=[];for(let d=0;d<=60;d++)a.push(d);[63,70,77,84,90,100,120,150,180].forEach(d=>a.push(d));return a.map(String)})();
@@ -175,7 +250,7 @@ function wdStatus(date,days){
 }
 function wdHtml(date,days){const st=wdStatus(date,days);return st?`<span class="ub ${st.cls}">${esc(st.txt)}</span>`:''}
 function updateWdAll(){LOCS.forEach(l=>treats(form.locs[l.k]).forEach((t,i)=>{const el=$(`${l.k}-t${i}-wd`);if(el)el.innerHTML=wdHtml(form.date,t.withdrawal)}))}
-function medInfoHtml(t){const m=serials.find(x=>x.name===t.medName&&x.serial===t.serial);if(!m||!m.usedFor)return '';return `<span class="hint">Used for: ${esc(m.usedFor)}</span>`}
+function medInfoHtml(t){const m=serials.find(x=>x.name===t.medName&&x.serial===t.serial);if(!m)return '';if(hasStock(m)){const left=mlLeft(m),need=totalMl(t);return `${m.usedFor?`<span class="hint">Used for: ${esc(m.usedFor)}</span><br>`:''}<span class="hint" style="color:${left-need<0?'var(--loss)':'inherit'}">In stock: ${fmtL(left)}${need?` · this uses ${fmtL(need)} → ${fmtL(left-need)} left`:''}</span>`}if(!m.usedFor)return '';return `<span class="hint">Used for: ${esc(m.usedFor)}</span>`}
 function treatHtml(l,t,i,n){
   const id=f=>`${l.k}-t${i}-${f}`, a=f=>`id="${id(f)}" data-f="${f}" data-t="${i}"`;
   return `<div class="treat">
@@ -188,22 +263,55 @@ function treatHtml(l,t,i,n){
       <div><label for="${id('medDose')}">Dosage (ml per pig)</label><select ${a('medDose')}>${doseOptions(t.medDose)}</select></div>
       <div><label for="${id('withdrawal')}">Withdrawal period</label><select ${a('withdrawal')}>${wdOptions(t.withdrawal)}</select></div>
       <div class="span-all wd-out" id="${id('wd')}">${wdHtml(form.date,t.withdrawal)}</div>
-      <div><label for="${id('medReason')}">Medication reason</label><select ${a('medReason')}>${listOptions(MED_REASONS,t.medReason,'Select reason')}</select></div>
+      <div><label for="${id('medReason')}">Medication reason</label><select ${a('medReason')}>${listOptions(reasonsFor(t),t.medReason,'Select reason')}</select><div class="hint" id="${id('rhint')}" style="font-size:12px;margin-top:3px">${esc(reasonHint(t))}</div></div>
       <div><label for="${id('markColour')}">Marking colour</label><select ${a('markColour')}>${listOptions(MARK_COLOURS,t.markColour,'Select colour',c=>(COLOUR_DOT[c]?COLOUR_DOT[c]+' ':'')+c)}</select></div>
       <div><label for="${id('markType')}">Mark type</label><select ${a('markType')}>${listOptions(MARK_TYPES,t.markType,'Select mark')}</select></div>
     </div></div>`;
 }
+/* ---------- Photos for the report ----------
+   The camera button beside each tick box takes a photo. Photos are shrunk (longest side 1280 px), shown under the area,
+   sent to the NAS beside the PDF (Reports/<year>/<year-month>/Photos/...) and printed in the PDF report. */
+const PHOTO_ITEMS={rodEvidence:'Evidence of rodents',rodRestock:'Bait restock required'};
+const itemName=k=>(CHECKS.find(c=>c.k===k)||{}).n||PHOTO_ITEMS[k]||k;
+let camTarget=null; const photoCache={};   // photoCache[inspection id] = photos taken on this phone, for re-sending the PDF
+const CAM_SVG='<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>';
+function camBtn(area,item){const n=form.photos.filter(p=>p.area===area&&p.item===item).length;
+  return `<button type="button" class="cam-btn${n?' has':''}" data-cam="${area}|${item}" aria-label="Take a photo – ${esc(itemName(item))}">${CAM_SVG}${n?`<span class="cam-n">${n}</span>`:''}</button>`}
+function photoStrip(area){return form.photos.filter(p=>p.area===area).map(p=>`<figure class="photo"><img src="data:image/jpeg;base64,${p.data}" alt="${esc(p.label)}"><figcaption>${esc(p.label)}</figcaption><button type="button" class="photo-x" data-rmph="${p.id}" aria-label="Delete photo">×</button></figure>`).join('')}
+function refreshPhotos(area){
+  const st=$('ph-'+area); if(st)st.innerHTML=photoStrip(area);
+  document.querySelectorAll(`[data-cam^="${area}|"]`).forEach(b=>{const [a,i]=b.dataset.cam.split('|');b.outerHTML=camBtn(a,i)});
+}
+function shrinkPhoto(file){return new Promise((res,rej)=>{
+  const url=URL.createObjectURL(file), img=new Image();
+  img.onload=()=>{const M=1280,r=Math.min(1,M/Math.max(img.width,img.height)),c=document.createElement('canvas');
+    c.width=Math.round(img.width*r); c.height=Math.round(img.height*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(url); res({data:c.toDataURL('image/jpeg',0.72).split(',')[1],w:c.width,h:c.height})};
+  img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Photo could not be read'))};
+  img.src=url})}
+$('cam-input').addEventListener('change',async e=>{
+  const files=[...(e.target.files||[])]; if(!files.length||!camTarget)return;
+  const {area,item}=camTarget;
+  for(const f of files){
+    try{const p=await shrinkPhoto(f); form.photos.push({id:Math.random().toString(36).slice(2,10),area,item,label:`${areaName(area)} – ${itemName(item)}`,...p,takenAt:Date.now()})}
+    catch(err){toast('Photo could not be added. Try again.')}
+  }
+  refreshPhotos(area); toast(files.length>1?`${files.length} photos added`:'Photo added');
+});
+function photoDir(h){const [y,m]=h.date.split('-');const safe=String(h.name||'').replace(/[^A-Za-z0-9 _-]/g,'').trim()||'unknown';return `Reports/${y}/${y}-${m}/Photos/${h.date} ${String(h.time||'').replace(':','')} - ${safe}`}
 function ubHtml(d){const st=useByState(d);return st?`<span class="ub ${st.cls}">${esc(st.txt)}</span>`:''}
 function renderLocs(){
+  LOCS.forEach(l=>{if(!form.locs[l.k])form.locs[l.k]=blankLoc(); if(!form.rodent.areas[l.k])form.rodent.areas[l.k]={boxes:'0',evidence:false,restock:false}});
   $('locs').innerHTML=LOCS.map(l=>{
     const s=form.locs[l.k];
     return `<article class="loc" data-loc="${l.k}">
-      <div class="loc-head"><span class="tag">${l.n}</span><span class="loc-right"><span class="loc-pigs" id="pg-${l.k}"></span><span class="loc-state" id="st-${l.k}"></span></span></div>
+      <div class="loc-head"><span class="tag">${esc(l.n)}</span><span class="loc-right"><span class="loc-pigs" id="pg-${l.k}"></span><span class="loc-state" id="st-${l.k}"></span></span></div>
       <div class="loc-body">
         <div class="group-title">Checks</div>
-        <div class="checks">${checksFor(l.k).map(c=>`<div class="check${c.warn?' warn':''}">
+        <div class="checks">${checksFor(l.k).map(c=>`<div class="check-cam"><div class="check${c.warn?' warn':''}">
           <input type="checkbox" id="${l.k}-${c.k}" data-f="${c.k}"${s[c.k]?' checked':''}>
-          <label for="${l.k}-${c.k}"><span class="box">${TICK}</span>${c.n}</label></div>`).join('')}</div>
+          <label for="${l.k}-${c.k}"><span class="box">${TICK}</span>${c.n}</label></div>${camBtn(l.k,c.k)}</div>`).join('')}</div>
+        <div class="photo-strip" id="ph-${l.k}">${photoStrip(l.k)}</div>
         <div class="row" style="margin-top:12px">
           ${hasFeed(l.k)?`<div><label for="${l.k}-feedAdded">Feed added</label>
             <select id="${l.k}-feedAdded" data-f="feedAdded">
@@ -233,7 +341,7 @@ function renderLocs(){
   renderRodent();
   updateTotals();
 }
-const rodentTotal=r=>r&&r.areas?LOCS.reduce((a,l)=>a+(+((r.areas[l.k]||{}).boxes)||0),0):0;
+const rodentTotal=r=>r&&r.areas?Object.values(r.areas).reduce((a,x)=>a+(+(x||{}).boxes||0),0):0;
 function boxOptions(sel){let o='';for(let i=0;i<=30;i++)o+=`<option value="${i}"${String(i)===sel?' selected':''}>${i} ${i===1?'box':'boxes'}</option>`;return o}
 function poisonOptions(sel){
   let o=poisons.length?'<option value="">Select poison</option>':'<option value="">Add poisons in the Meds tab</option>';
@@ -242,7 +350,7 @@ function poisonOptions(sel){
   return o;
 }
 function renderPoisons(){
-  $('poison-list').innerHTML=poisons.length?poisons.map((n,i)=>`<li><span>${esc(n)}</span>${canWrite?`<button class="link-x" data-rmp="${i}" aria-label="Remove ${esc(n)}">Remove</button>`:''}</li>`).join('')
+  $('poison-list').innerHTML=poisons.length?poisons.map((n,i)=>`<li><span>${esc(n)}</span>${isAdmin()?`<button class="link-x" data-rmp="${i}" aria-label="Remove ${esc(n)}">Remove</button>`:''}</li>`).join('')
     :'<li style="color:var(--ink-2);font-weight:400">No poisons yet. Add the first one above.</li>';
   const sel=$('rod-pname'); if(sel)sel.innerHTML=poisonOptions(form.rodent.poisonName);
 }
@@ -266,8 +374,8 @@ function rodentAreaHtml(l){
     <div class="group-title">Rodent control</div>
     <div class="rod-row">
       <div><label for="rb-${l.k}">Bait boxes checked</label><select id="rb-${l.k}" data-rb="${l.k}">${boxOptions(a.boxes)}</select></div>
-      <div class="check alert"><input type="checkbox" id="re-${l.k}" data-re="${l.k}"${a.evidence?' checked':''}><label for="re-${l.k}"><span class="box">${TICK}</span><span>Evidence of rodents</span></label></div>
-      <div class="check warn"><input type="checkbox" id="rr-${l.k}" data-rr="${l.k}"${a.restock?' checked':''}><label for="rr-${l.k}"><span class="box">${TICK}</span><span>Restock required</span></label></div>
+      <div class="check-cam"><div class="check alert"><input type="checkbox" id="re-${l.k}" data-re="${l.k}"${a.evidence?' checked':''}><label for="re-${l.k}"><span class="box">${TICK}</span><span>Evidence of rodents</span></label></div>${camBtn(l.k,'rodEvidence')}</div>
+      <div class="check-cam"><div class="check warn"><input type="checkbox" id="rr-${l.k}" data-rr="${l.k}"${a.restock?' checked':''}><label for="rr-${l.k}"><span class="box">${TICK}</span><span>Restock required</span></label></div>${camBtn(l.k,'rodRestock')}</div>
     </div></div>`;
 }
 function renderRodent(){
@@ -290,7 +398,7 @@ function rodentInput(t){
   const r=form.rodent;
   if(t.dataset.rb)r.areas[t.dataset.rb].boxes=t.value;
   else if(t.dataset.rr)r.areas[t.dataset.rr].restock=t.checked;
-  else if(t.dataset.re){r.areas[t.dataset.re].evidence=t.checked;r.evidence=LOCS.some(l=>r.areas[l.k].evidence);}
+  else if(t.dataset.re){r.areas[t.dataset.re].evidence=t.checked;r.evidence=LOCS.some(l=>(r.areas[l.k]||{}).evidence);}
   else return false;
   const st=$('st-rodent'); if(st)st.textContent=`${rodentTotal(r)} bait boxes checked`; updateTotals();
   return true;
@@ -303,6 +411,8 @@ $('rodent').addEventListener('input',e=>{
   $('st-rodent').textContent=`${rodentTotal(r)} bait boxes checked`; updateTotals();
 });
 $('locs').addEventListener('click',e=>{
+  const cam=e.target.closest('[data-cam]'); if(cam){const [area,item]=cam.dataset.cam.split('|'); camTarget={area,item}; $('cam-input').value=''; $('cam-input').click(); return}
+  const rp=e.target.closest('[data-rmph]'); if(rp){const p=form.photos.find(x=>x.id===rp.dataset.rmph); if(p&&confirm(`Delete this photo (${p.label})?`)){form.photos=form.photos.filter(x=>x!==p); refreshPhotos(p.area)} return}
   const add=e.target.closest('[data-addt]'), rm=e.target.closest('[data-rmt]');
   if(add){const s=form.locs[add.dataset.addt]; s.meds.push(blankTreat()); renderLocs(); const i=s.meds.length-1; const el=$(`${add.dataset.addt}-t${i}-med`); if(el){el.focus(); el.scrollIntoView({block:'center'})} updateTotals(); return}
   if(rm){const s=form.locs[rm.dataset.rmt]; if(!confirm(`Remove medication ${+rm.dataset.ti+1} from this area?`))return; s.meds.splice(+rm.dataset.ti,1); renderLocs(); updateTotals();}
@@ -311,7 +421,9 @@ $('locs').addEventListener('input',e=>{
   if(rodentInput(e.target))return;
   const card=e.target.closest('[data-loc]'); const f=e.target.dataset.f; if(!card||!f)return;
   const s=form.locs[card.dataset.loc];
-  if(e.target.dataset.t!==undefined){const t=s.meds[+e.target.dataset.t]; if(f==='med'){const m=serials.find(x=>medLabel(x)===e.target.value);t.medName=m?m.name:'';t.serial=m?m.serial:'';t.useBy=m?m.useBy:''; if(m&&m.withdrawal!==''&&m.withdrawal!=null){t.withdrawal=String(m.withdrawal);const k=card.dataset.loc,ti=e.target.dataset.t,ws=$(`${k}-t${ti}-withdrawal`);if(ws){ws.innerHTML=wdOptions(t.withdrawal)}const wo=$(`${k}-t${ti}-wd`);if(wo)wo.innerHTML=wdHtml(form.date,t.withdrawal)} const inf=$(`${card.dataset.loc}-t${e.target.dataset.t}-info`); if(inf)inf.innerHTML=medInfoHtml(t)} else t[f]=e.target.value; if(f==='withdrawal'){const el=$(`${card.dataset.loc}-t${e.target.dataset.t}-wd`);if(el)el.innerHTML=wdHtml(form.date,t.withdrawal)} updateTotals(); return}
+  if(e.target.dataset.t!==undefined){const t=s.meds[+e.target.dataset.t]; if(f==='med'){const m=serials.find(x=>medLabel(x)===e.target.value);t.medName=m?m.name:'';t.serial=m?m.serial:'';t.useBy=m?m.useBy:''; if(m&&m.withdrawal!==''&&m.withdrawal!=null){t.withdrawal=String(m.withdrawal);const k=card.dataset.loc,ti=e.target.dataset.t,ws=$(`${k}-t${ti}-withdrawal`);if(ws){ws.innerHTML=wdOptions(t.withdrawal)}const wo=$(`${k}-t${ti}-wd`);if(wo)wo.innerHTML=wdHtml(form.date,t.withdrawal)} const inf=$(`${card.dataset.loc}-t${e.target.dataset.t}-info`); if(inf)inf.innerHTML=medInfoHtml(t);
+      { const k=card.dataset.loc,ti=e.target.dataset.t; if(f==='med'){ if(t.medReason&&!reasonsFor(t).includes(t.medReason))t.medReason='';
+        const rs=$(`${k}-t${ti}-medReason`); if(rs)rs.innerHTML=listOptions(reasonsFor(t),t.medReason,'Select reason'); const rh=$(`${k}-t${ti}-rhint`); if(rh)rh.textContent=reasonHint(t) } } } else t[f]=e.target.value; if(f==='withdrawal'){const el=$(`${card.dataset.loc}-t${e.target.dataset.t}-wd`);if(el)el.innerHTML=wdHtml(form.date,t.withdrawal)} if(f!=='med'){const inf=$(`${card.dataset.loc}-t${e.target.dataset.t}-info`);if(inf)inf.innerHTML=medInfoHtml(t)} updateTotals(); return}
   s[f]=e.target.type==='checkbox'?e.target.checked:e.target.value;
   if((f==='beddingOk'||f==='beddingReq')&&s[f]){const o=f==='beddingOk'?'beddingReq':'beddingOk';s[o]=false;const el=$(`${card.dataset.loc}-${o}`);if(el)el.checked=false}
   if(f==='medicated'){ if(!Array.isArray(s.meds))s.meds=[]; if(s.medicated==='Yes'&&!s.meds.length)s.meds=[blankTreat()]; if(s.medicated==='No')s.meds=[]; renderLocs(); return; }
@@ -332,30 +444,98 @@ function updateTotals(){
   if(form.rodent){$('t-rod').textContent=rodentTotal(form.rodent);$('t-rod-pill').classList.toggle('loss',form.rodent.evidence)}
 }
 function renderOpSelect(){
-  const sel=$('f-name'); const cur=form.name;
-  let o=operatives.length?'<option value="">Select operative</option>':'<option value="">Add operatives in the Operatives tab</option>';
+  const sel=$('f-name');
+  // Users can only record inspections as themselves; admins can pick anyone
+  if(me&&!isAdmin()){form.name=me.name; sel.innerHTML=`<option selected>${esc(me.name)}</option>`; sel.value=me.name; sel.disabled=true; return}
+  sel.disabled=false;
+  const cur=form.name;
+  let o=operatives.length?'<option value="">Select operative</option>':'<option value="">Add users in Settings</option>';
   operatives.forEach(n=>o+=`<option${n===cur?' selected':''}>${esc(n)}</option>`);
   if(cur&&!operatives.includes(cur))o+=`<option selected>${esc(cur)}</option>`;
   sel.innerHTML=o; sel.value=cur||'';
 }
+
+/* ---------- Users: admin and user permissions ----------
+   Stored on the NAS in app-data/settings/accounts.json, so every phone shares one list.
+   Admin – everything.
+   User  – new inspections (as themselves), view history, pig numbers, stats and meds, WhatsApp, PDFs, export.
+           Can't record or remove pig numbers, delete inspections, change medications, poisons, users or the NAS connection. */
+const ROLE_NAME={admin:'Admin',user:'User'};
+/* SHA-256, so PINs are never stored as typed */
+function sha256(str){
+  const ascii=unescape(encodeURIComponent(str)); let s=ascii;
+  const rr=(v,a)=>(v>>>a)|(v<<(32-a)), max=2**32, words=[], bitLen=ascii.length*8;
+  let hash=[]; const k=[]; let pc=0; const comp={};
+  for(let c=2;pc<64;c++){if(!comp[c]){for(let i=0;i<313;i+=c)comp[i]=c;hash[pc]=(Math.pow(c,.5)*max)|0;k[pc++]=(Math.pow(c,1/3)*max)|0}}
+  s+='\x80'; while(s.length%64-56)s+='\x00';
+  for(let i=0;i<s.length;i++)words[i>>2]|=s.charCodeAt(i)<<((3-i)%4)*8;
+  words[words.length]=(bitLen/max)|0; words[words.length]=bitLen;
+  for(let j=0;j<words.length;){
+    const w=words.slice(j,j+=16), old=hash; hash=hash.slice(0,8);
+    for(let i=0;i<64;i++){
+      const w15=w[i-15],w2=w[i-2],a=hash[0],e=hash[4];
+      const t1=hash[7]+(rr(e,6)^rr(e,11)^rr(e,25))+((e&hash[5])^(~e&hash[6]))+k[i]
+        +(w[i]=i<16?w[i]:(w[i-16]+(rr(w15,7)^rr(w15,18)^(w15>>>3))+w[i-7]+(rr(w2,17)^rr(w2,19)^(w2>>>10)))|0);
+      const t2=(rr(a,2)^rr(a,13)^rr(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(t1+t2)|0].concat(hash); hash[4]=(hash[4]+t1)|0;
+    }
+    for(let i=0;i<8;i++)hash[i]=(hash[i]+old[i])|0;
+  }
+  let out=''; for(let i=0;i<8;i++)for(let j=3;j>=0;j--){const b=(hash[i]>>(j*8))&255;out+=(b<16?'0':'')+b.toString(16)}
+  return out;
+}
+const pinHash=(name,pin)=>sha256(`pigapp|${String(name).trim().toLowerCase()}|${pin}`);
+const validPin=p=>/^\d{4,6}$/.test(p);
+const adminCount=acc=>Object.values(acc||{}).filter(a=>a.role==='admin').length;
+/* Writes the users list, and keeps the plain operatives list in step for phones still on an older version */
+function writeAccounts(acc){
+  accounts=acc;
+  NAS.setSetting('accounts',acc);
+  NAS.setSetting('operatives',Object.keys(acc).sort((a,b)=>a.localeCompare(b)));
+}
 function renderOperatives(){
-  $('op-list').innerHTML=operatives.length?operatives.map((n,i)=>`<li><span>${esc(n)}</span>${canWrite?`<button class="link-x" data-rmop="${i}" aria-label="Remove ${esc(n)}">Remove</button>`:''}</li>`).join('')
-    :'<li style="color:var(--ink-2);font-weight:400">No operatives yet. Add the first one above.</li>';
+  const list=$('op-list');
+  if(!operatives.length)list.innerHTML='<li style="color:var(--ink-2);font-weight:400">No users yet. Add the first one above.</li>';
+  else list.innerHTML=operatives.map((n,i)=>{
+    const a=(accounts||{})[n]||{role:'user',pin:''}; const self=me&&me.name===n;
+    return `<li><span>${esc(n)}${self?' <span class="med-sub" style="display:inline">(you)</span>':''} <span class="role-badge ${a.role==='admin'?'admin':''}">${ROLE_NAME[a.role]||'User'}</span>
+      <span class="med-sub">${a.pin?'PIN set':'No PIN yet – they choose one the first time they sign in'}</span></span>
+      ${isAdmin()?`<span class="med-actions">
+        <button class="link-x link-edit" data-setrole="${i}">${a.role==='admin'?'Make user':'Make admin'}</button>
+        ${a.pin?`<button class="link-x link-edit" data-resetpin="${i}">Reset PIN</button>`:''}
+        ${self?'':`<button class="link-x" data-rmop="${i}" aria-label="Remove ${esc(n)}">Remove</button>`}</span>`:''}</li>`}).join('');
   renderOpSelect();
 }
 async function addOperative(){
-  const v=$('new-op').value.trim().replace(/\s+/g,' '); const err=$('op-err'); err.hidden=true;
-  if(!v){err.textContent="Enter the operative's name.";err.hidden=false;$('new-op').focus();return}
-  if(operatives.some(n=>n.toLowerCase()===v.toLowerCase())){err.textContent='That operative is already in the list.';err.hidden=false;return}
-  try{await store.saveOperatives([...operatives,v].sort((a,b)=>a.localeCompare(b)));$('new-op').value='';$('new-op').focus();toast('Operative added')}
-  catch(e){err.textContent='Operative not added. Try again.';err.hidden=false}
+  const v=$('new-op').value.trim().replace(/\s+/g,' '); const role=$('new-op-role').value; const err=$('op-err'); err.hidden=true;
+  if(!v){err.textContent="Enter the person's full name.";err.hidden=false;$('new-op').focus();return}
+  if(operatives.some(n=>n.toLowerCase()===v.toLowerCase())){err.textContent='That person is already in the list.';err.hidden=false;return}
+  try{await store.saveAccounts({...accounts,[v]:{role,pin:''}});$('new-op').value='';$('new-op-role').value='user';toast(`${v} added as ${ROLE_NAME[role].toLowerCase()} – they set their PIN when they first sign in`)}
+  catch(e){err.textContent='User not added. Try again.';err.hidden=false}
 }
 $('add-op').addEventListener('click',addOperative);
 $('new-op').addEventListener('keydown',e=>{if(e.key==='Enter')addOperative()});
 $('op-list').addEventListener('click',async e=>{
-  const i=e.target.dataset.rmop; if(i===undefined)return;
-  if(!confirm(`Remove ${operatives[+i]} from the list? Saved inspections keep their name.`))return;
-  try{await store.saveOperatives(operatives.filter((_,j)=>j!==+i));toast('Operative removed')}catch(err){toast('Operative not removed. Try again.')}
+  if(!isAdmin())return;
+  const t=e.target, d=t.dataset, idx=d.rmop??d.setrole??d.resetpin; if(idx===undefined)return;
+  const n=operatives[+idx]; const a=accounts[n]; if(!a)return;
+  try{
+    if(d.setrole!==undefined){
+      const to=a.role==='admin'?'user':'admin';
+      if(to==='user'&&adminCount(accounts)<=1){toast('There must be at least one admin. Make someone else admin first.');return}
+      if(to==='user'&&me.name===n&&!confirm('Make yourself a user? You will lose admin permissions on this phone straight away.'))return;
+      if(to==='admin'&&!confirm(`Make ${n} an admin? They will be able to change pig numbers, delete inspections and manage users.`))return;
+      await store.saveAccounts({...accounts,[n]:{...a,role:to}}); toast(`${n} is now ${to==='admin'?'an admin':'a user'}`);
+    } else if(d.resetpin!==undefined){
+      if(!confirm(`Reset ${n}'s PIN? They will choose a new one the next time they sign in.`))return;
+      await store.saveAccounts({...accounts,[n]:{...a,pin:''}}); toast(`${n}'s PIN has been reset`);
+    } else {
+      if(me.name===n)return;
+      if(a.role==='admin'&&adminCount(accounts)<=1){toast('There must be at least one admin.');return}
+      if(!confirm(`Remove ${n}? They won't be able to sign in. Saved inspections keep their name.`))return;
+      const next={...accounts}; delete next[n]; await store.saveAccounts(next); toast(`${n} removed`);
+    }
+  }catch(err){toast('Not saved. Try again.')}
 });
 ['name','date','time'].forEach(k=>$('f-'+k).addEventListener('input',e=>{form[k]=e.target.value; if(k==='name')local.set('name',form.name); if(k==='date')updateWdAll()}));
 function fillDetails(){renderOpSelect();$('f-date').value=form.date;$('f-time').value=form.time;showGeo()}
@@ -433,20 +613,26 @@ async function doSave(send){
   }}
   const expired=LOCS.filter(l=>treats(form.locs[l.k]).some(t=>t.useBy&&t.useBy<todayISO()));
   if(expired.length&&!confirm(`A medication used in ${expired.map(l=>l.n).join(', ')} is past its use by date. Save the inspection anyway?`))return;
+  { const need={}; LOCS.forEach(l=>treats(form.locs[l.k]).forEach(t=>{const m=serials.find(x=>x.name===t.medName&&x.serial===t.serial); if(m&&hasStock(m)){const k=medLabel(m);need[k]=need[k]||{m,ml:0};need[k].ml+=totalMl(t)}}));
+    const short=Object.values(need).filter(x=>x.ml>mlLeft(x.m));
+    if(short.length&&!confirm(`Not enough in stock: ${short.map(x=>`${medLabel(x.m)} needs ${fmtL(x.ml)} but only ${fmtL(Math.max(0,mlLeft(x.m)))} is left`).join('; ')}. Save anyway? (Add bottles in the Meds tab.)`))return; }
   const totalDead=LOCS.reduce((a,l)=>a+ +form.locs[l.k].dead,0);
   const totalMedicated=LOCS.reduce((a,l)=>a+treats(form.locs[l.k]).reduce((b,t)=>b+(+t.medCount||0),0),0);
   const createdAt=Date.now();
   const before=stockAt(`${form.date}T${form.time||'23:59'}|${String(createdAt).padStart(15,'0')}`); // pig numbers before this inspection's deaths
   const short=LOCS.filter(l=>+form.locs[l.k].dead>before[l.k]);
   if(short.length&&!confirm(`More dead pigs are recorded than the app thinks are in ${short.map(l=>l.n).join(', ')}. Save anyway? (Update the numbers in the Pigs tab afterwards.)`))return;
-  const rec={name:form.name.trim(),date:form.date,time:form.time,geo:geo?{lat:geo.lat,lng:geo.lng,acc:geo.acc||null}:null,createdAt,totalDead,totalMedicated,stock:before,locs:JSON.parse(JSON.stringify(form.locs)),rodent:JSON.parse(JSON.stringify(form.rodent))};
+  const photos=form.photos.slice();
+  const rec={name:form.name.trim(),date:form.date,time:form.time,geo:geo?{lat:geo.lat,lng:geo.lng,acc:geo.acc||null}:null,createdAt,totalDead,totalMedicated,stock:before,layout:layoutNow(),locs:JSON.parse(JSON.stringify(Object.fromEntries(LOCS.map(l=>[l.k,form.locs[l.k]])))),rodent:JSON.parse(JSON.stringify({...form.rodent,areas:Object.fromEntries(LOCS.map(l=>[l.k,form.rodent.areas[l.k]]))}))};
+  if(photos.length){const dir=photoDir(rec),cnt={};rec.photos=photos.map(p=>{const k=p.area+'-'+p.item;cnt[k]=(cnt[k]||0)+1;return {area:p.area,item:p.item,label:p.label,file:`${dir}/${areaName(p.area)} - ${itemName(p.item)} ${cnt[k]}.jpg`.replace(/[^A-Za-z0-9 _\-\/.]/g,'')}})}
   if(send)sendWhatsApp(rec);
   $('save').disabled=true;
   try{
     const saved=await store.addInspection(rec);
     toast(NAS.configured()?'Inspection saved – sending to the NAS':'Inspection saved on this phone. Set up the NAS in More.');
     const n=form.name; form=freshForm(); form.name=n; fillDetails(); renderLocs(); window.scrollTo({top:0});
-    try{await queueReportPdf(saved)}catch(e){console.error('PDF failed',e)}
+    if(photos.length){photoCache[saved.id]=photos; saved.photos.forEach((m,i)=>NAS.putFile(m.file,{bodyBase64:photos[i].data,contentType:'image/jpeg'}))}
+    try{await queueReportPdf(saved,photos)}catch(e){console.error('PDF failed',e)}
   }
   catch(e){toast('Inspection not saved. Try again.')}
   finally{$('save').disabled=!canWrite}
@@ -462,10 +648,11 @@ function reportText(h){
   L.push(`Inspected by: ${h.name}`);
   if(h.geo)L.push(`Location: ${mapsUrl(h.geo)}`);
   L.push(`Dead pigs: ${h.totalDead||0} | Pigs medicated: ${h.totalMedicated||0}`);
-  LOCS.forEach(l=>{const s=(h.locs||{})[l.k]; if(!s)return;
+  if(h.photos&&h.photos.length)L.push(`📷 ${h.photos.length} photo${h.photos.length===1?'':'s'} – in the PDF report on the NAS`);
+  recLocs(h).forEach(l=>{const s=(h.locs||{})[l.k]; if(!s)return;
     L.push('',`*${l.n}*`);
-    L.push(checksFor(l.k).map(c=>c.warn?`${c.n}: ${chk(s,c.k)?'Yes ⚠️':'No'}`:`${c.n} ${t(chk(s,c.k))}`).join('  '));
-    if(hasFeed(l.k)||s.feedAdded)L.push(`Feed: ${s.feedAdded||'not recorded'}`);
+    L.push(checksFor(l.k,h).map(c=>c.warn?`${c.n}: ${chk(s,c.k)?'Yes ⚠️':'No'}`:`${c.n} ${t(chk(s,c.k))}`).join('  '));
+    if(hasFeed(l.k,h)||s.feedAdded)L.push(`Feed: ${s.feedAdded||'not recorded'}`);
     L.push(`Dead pigs: ${s.dead||0}${+s.dead>0?' ⚠️':''}`);
     const ts=treats(s); if(ts.length){ts.forEach((t,i)=>{const m=medLabel({name:t.medName,serial:t.serial});L.push(`Medicated${ts.length>1?` (${i+1})`:''}: ${t.medCount||0} pigs${t.medDose?` × ${t.medDose} ml (${totalMl(t)} ml total)`:''} – ${m||'medication not recorded'}${t.useBy?` (use by ${fmtDate(t.useBy)})`:''}`);if(t.medReason)L.push(`Reason: ${t.medReason}`);if(markText(t))L.push(`Marked: ${markText(t)}`);if(t.withdrawal!==undefined&&t.withdrawal!==''){const e=wdEnd(h.date,t.withdrawal);L.push(+t.withdrawal===0?'Withdrawal: none':`Withdrawal: ${t.withdrawal} days – free from medication on ${fmtDate(e)}`)}})}
     else L.push('Medicated: No');
@@ -474,7 +661,7 @@ function reportText(h){
   const r=h.rodent;
   if(r&&r.areas){
     L.push('','*Rodent control*');
-    LOCS.forEach(l=>{const a=r.areas[l.k]||{boxes:'0',restock:false};L.push(`${l.n}: ${a.boxes} bait boxes${a.evidence?' – evidence of rodents ⚠️':''}${a.restock?' – restock required ⚠️':''}`)});
+    Object.keys(r.areas).forEach(k=>{const l={k,n:areaName(k)};const a=r.areas[k]||{boxes:'0',restock:false};L.push(`${l.n}: ${a.boxes} bait boxes${a.evidence?' – evidence of rodents ⚠️':''}${a.restock?' – restock required ⚠️':''}`)});
     L.push(`Total bait boxes checked: ${rodentTotal(r)}`);
     if(r.poisonType||r.poisonName)L.push(`Poison used: ${[r.poisonType,r.poisonName].filter(Boolean).join(' – ')}`);
     L.push(`Evidence of rodents: ${r.evidence?'Yes ⚠️':'No'}`);
@@ -497,14 +684,14 @@ function fmtDate(d){if(!d)return '';const [y,m,dd]=d.split('-');return `${dd}/${
 function rodentHtml(r){
   if(!r)return '<div class="rod-sum"><b>Rodent control:</b> not recorded</div>';
   if(!r.areas){const t=(r.boxes||[]).filter(Boolean).length;return `<div class="rod-sum"><b>Rodent control</b><div>Bait boxes checked: <b>${t}/10</b></div><div>Evidence of rodents: ${r.evidence?'<span class="n">Yes</span>':'<span class="y">No</span>'} · Bait required for restock: ${r.restock?'<span class="n">Yes</span>':'<span class="y">No</span>'}</div>${r.notes?`<div>Notes: ${esc(r.notes)}</div>`:''}</div>`}
-  return `<div class="rod-sum"><b>Rodent control</b> – ${rodentTotal(r)} bait boxes checked · Evidence of rodents: ${r.evidence?`<span class="n">Yes${LOCS.some(l=>(r.areas[l.k]||{}).evidence)?' ('+LOCS.filter(l=>(r.areas[l.k]||{}).evidence).map(l=>l.n).join(', ')+')':''}</span>`:'<span class="y">No</span>'}
+  return `<div class="rod-sum"><b>Rodent control</b> – ${rodentTotal(r)} bait boxes checked · Evidence of rodents: ${r.evidence?`<span class="n">Yes${Object.keys(r.areas).some(k=>(r.areas[k]||{}).evidence)?' ('+Object.keys(r.areas).filter(k=>(r.areas[k]||{}).evidence).map(areaName).join(', ')+')':''}</span>`:'<span class="y">No</span>'}
     <table style="min-width:0;margin-top:6px"><thead><tr><th>Area</th><th>Bait boxes checked</th><th>Evidence of rodents</th><th>Restock required</th></tr></thead><tbody>
-    ${LOCS.map(l=>{const a=r.areas[l.k]||{boxes:'0',restock:false};return `<tr><td>${l.n}</td><td>${esc(a.boxes)}</td><td>${a.evidence?'<span class="n">Yes</span>':'No'}</td><td>${a.restock?'<span class="n">Yes</span>':'No'}</td></tr>`}).join('')}
+    ${Object.keys(r.areas).map(k=>{const l={k,n:areaName(k)};const a=r.areas[k]||{boxes:'0',restock:false};return `<tr><td>${esc(l.n)}</td><td>${esc(a.boxes)}</td><td>${a.evidence?'<span class="n">Yes</span>':'No'}</td><td>${a.restock?'<span class="n">Yes</span>':'No'}</td></tr>`}).join('')}
     </tbody></table>${r.poisonType||r.poisonName?`<div style="margin-top:6px">Poison used: <b>${esc([r.poisonType,r.poisonName].filter(Boolean).join(' – '))}</b></div>`:''}${r.notes?`<div style="margin-top:6px">Notes: ${esc(r.notes)}</div>`:''}</div>`;
 }
 function renderWithdrawals(){
   const rows=[];
-  history.forEach(h=>LOCS.forEach(l=>{const s=(h.locs||{})[l.k]; if(!s)return; treats(s).forEach(t=>{
+  history.forEach(h=>recLocs(h).forEach(l=>{const s=(h.locs||{})[l.k]; if(!s)return; treats(s).forEach(t=>{
     if(t.withdrawal===undefined||t.withdrawal===''||+t.withdrawal===0)return; const e=wdEnd(h.date,t.withdrawal); const left=daysFromToday(e);
     if(left>0)rows.push({area:l.n,med:medLabel({name:t.medName,serial:t.serial})||'Medication',pigs:t.medCount||'0',mark:markText(t),end:e,left,date:h.date})})}));
   rows.sort((a,b)=>a.end<b.end?-1:a.end>b.end?1:0);
@@ -514,6 +701,7 @@ function renderWithdrawals(){
     ${rows.map(r=>`<tr><td><b>${esc(r.area)}</b></td><td>${esc(r.pigs)}</td><td><b class="n">${fmtDate(r.end)}</b><br><span class="entry-meta">${r.left} day${r.left===1?'':'s'} to go</span></td><td>${esc(r.mark||'–')}</td><td>${esc(r.med)}</td><td>${fmtDate(r.date)}</td></tr>`).join('')}
     </tbody></table></div></div>`:'';
 }
+const histChecks=h=>{const used=new Set();recLocs(h).forEach(l=>lay(l.k,h).checks.forEach(c=>used.add(c)));return CHECKS.filter(c=>used.has(c.k))};
 function renderHistory(){
   renderWithdrawals();
   $('hist-count').textContent=history.length?`${history.length} inspection${history.length>1?'s':''} saved`:'No inspections saved yet';
@@ -521,19 +709,20 @@ function renderHistory(){
   if(!history.length){$('hist').innerHTML='<div class="empty">Saved inspections appear here. Fill in the New inspection tab and save it.</div>';return}
   $('hist').innerHTML=history.map(h=>`<details class="entry">
     <summary><div><div class="entry-title">${fmtDate(h.date)} at ${esc(h.time)}</div><div class="entry-meta">Inspected by ${esc(h.name)}${h.geo?` · <a class="maplink" href="${mapsUrl(h.geo)}" target="_blank" rel="noopener">${esc(fmtLL(h.geo))}</a>`:''}</div></div>
-    <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${h.rodent&&h.rodent.evidence?`<span class="dead-badge loss">Rodents seen</span>`:''}${h.totalMedicated?`<span class="dead-badge med-badge">${h.totalMedicated} medicated</span>`:''}<span class="dead-badge ${h.totalDead>0?'loss':''}">${h.totalDead} dead</span></span></summary>
-    <div class="entry-body"><table><thead><tr><th>Area</th><th>Pigs</th>${CHECKS.map(c=>`<th>${c.n}</th>`).join('')}<th>Feed</th><th>Dead</th><th>Medicated</th><th>No. medicated</th><th>Dosage</th><th>Medication / serial no.</th><th>Notes</th></tr></thead><tbody>
-    ${LOCS.map(l=>{const s=(h.locs||{})[l.k]||blankLoc();return `<tr><td><b>${l.n}</b></td><td>${h.stock&&h.stock[l.k]!=null?(+s.dead?`${h.stock[l.k]} → ${h.stock[l.k]-(+s.dead)}`:h.stock[l.k]):'–'}</td>${CHECKS.map(c=>`<td>${c.only&&!c.only.includes(l.k)?'–':(c.k==='beddingReq'&&chk(s,c.k)?'<span class="n">Yes</span>':c.k==='beddingReq'?'No':yn(chk(s,c.k)))}</td>`).join('')}
+    <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${h.rodent&&h.rodent.evidence?`<span class="dead-badge loss">Rodents seen</span>`:''}${h.photos&&h.photos.length?`<span class="dead-badge">📷 ${h.photos.length}</span>`:''}${h.totalMedicated?`<span class="dead-badge med-badge">${h.totalMedicated} medicated</span>`:''}<span class="dead-badge ${h.totalDead>0?'loss':''}">${h.totalDead} dead</span></span></summary>
+    <div class="entry-body"><table><thead><tr><th>Area</th><th>Pigs</th>${histChecks(h).map(c=>`<th>${c.n}</th>`).join('')}<th>Feed</th><th>Dead</th><th>Medicated</th><th>No. medicated</th><th>Dosage</th><th>Medication / serial no.</th><th>Notes</th></tr></thead><tbody>
+    ${recLocs(h).map(l=>{const s=(h.locs||{})[l.k]||blankLoc();return `<tr><td><b>${esc(l.n)}</b></td><td>${h.stock&&h.stock[l.k]!=null?(+s.dead?`${h.stock[l.k]} → ${h.stock[l.k]-(+s.dead)}`:h.stock[l.k]):'–'}</td>${histChecks(h).map(c=>`<td>${!lay(l.k,h).checks.includes(c.k)?'–':(c.k==='beddingReq'&&chk(s,c.k)?'<span class="n">Yes</span>':c.k==='beddingReq'?'No':yn(chk(s,c.k)))}</td>`).join('')}
       <td>${esc(s.feedAdded||'–')}</td><td${+s.dead>0?' class="n"':''}>${esc(s.dead)}</td><td>${esc(s.medicated)}</td><td>${(()=>{const ts=treats(s);return ts.length?ts.reduce((a,t)=>a+(+t.medCount||0),0):'–'})()}</td><td>${treats(s).map(t=>t.medDose?`${esc(t.medDose)} ml/pig<br><span class="entry-meta">${totalMl(t)} ml total</span>`:'–').join('<hr class="tsep">')||'–'}</td><td>${treats(s).map(t=>`${esc(medLabel({name:t.medName,serial:t.serial})||'–')}${t.useBy?`<br><span class="${t.useBy<h.date?'n':''}">Use by ${fmtDate(t.useBy)}</span>`:''}${t.medReason?`<br>Reason: ${esc(t.medReason)}`:''}${markText(t)?`<br>Marked: ${esc(markText(t))}`:''}${t.withdrawal!==undefined&&t.withdrawal!==''?(()=>{const e=wdEnd(h.date,t.withdrawal);const live=+t.withdrawal>0&&daysFromToday(e)>0;return `<br><span class="${live?'n':'y'}">Withdrawal: ${+t.withdrawal===0?'none':`${esc(t.withdrawal)} days – free ${fmtDate(e)}`}</span>`})():''}`).join('<hr class="tsep">')||'–'}</td><td>${esc(s.notes||'')}</td></tr>`}).join('')}
     </tbody></table>
     ${rodentHtml(h.rodent)}
+    ${h.photos&&h.photos.length?`<div class="rod-sum"><b>Photos</b> (in the PDF report and the Photos folder on the NAS)<ul style="margin:4px 0 0;padding-left:18px">${h.photos.map(p=>`<li>${esc(p.label)}</li>`).join('')}</ul></div>`:''}
     <div class="entry-actions"><button class="btn btn-wa" data-wa="${esc(h.id)}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" style="flex:none"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Send via WhatsApp</span></button>
     <button class="btn btn-quiet" data-pdf="${esc(h.id)}">Send PDF to NAS again</button>
-    ${canWrite&&!WORKER?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
+    ${isAdmin()?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
 }
 $('hist').addEventListener('click',async e=>{
   const wa=e.target.closest('[data-wa]'); if(wa){const h=history.find(x=>x.id===wa.dataset.wa); if(h)sendWhatsApp(h); return}
-  const pdf=e.target.closest('[data-pdf]'); if(pdf){const h=history.find(x=>x.id===pdf.dataset.pdf); if(h){try{await queueReportPdf(h);toast('PDF queued for the NAS')}catch(err){toast('PDF could not be made')}} return}
+  const pdf=e.target.closest('[data-pdf]'); if(pdf){const h=history.find(x=>x.id===pdf.dataset.pdf); if(h){try{await queueReportPdf(h,photoCache[h.id]);toast('PDF queued for the NAS')}catch(err){toast('PDF could not be made')}} return}
   const id=e.target.dataset.del; if(!id)return;
   if(!confirm('Delete this inspection? This cannot be undone.'))return;
   try{await store.deleteInspection(id);toast('Inspection deleted')}catch(err){toast('Inspection not deleted. Try again.')}
@@ -544,9 +733,9 @@ function csvCell(v){v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'
 function buildCsv(){
   const head=['Date','Time','Inspected by','Latitude','Longitude','Google Maps link','Area','Pigs in area (before deaths)',...CHECKS.map(c=>c.n),'Feed added','Dead pigs','Medicated','Pigs medicated','Dosage (ml per pig)','Total ml','Medication name','Serial number','Use by date','Withdrawal (days)','Free from medication','Medication reason','Marking colour','Mark type','Notes','Bait boxes checked','Bait restock required','Evidence of rodents','Poison type','Poison name','Rodent notes'];
   const rows=[head];
-  history.forEach(h=>LOCS.forEach(l=>{const s=(h.locs||{})[l.k]||blankLoc();
+  history.forEach(h=>recLocs(h).forEach(l=>{const s=(h.locs||{})[l.k]||blankLoc();
     const ts=treats(s), J=f=>ts.map(f).join(' | ');
-    rows.push([fmtDate(h.date),h.time,h.name,h.geo?h.geo.lat:'',h.geo?h.geo.lng:'',h.geo?mapsUrl(h.geo):'',l.n,h.stock&&h.stock[l.k]!=null?h.stock[l.k]:'',...CHECKS.map(c=>c.only&&!c.only.includes(l.k)?'':(chk(s,c.k)?'Yes':'No')),s.feedAdded,s.dead,s.medicated,J(t=>t.medCount||'0'),J(t=>t.medDose||''),J(t=>t.medDose?totalMl(t):''),J(t=>t.medName||''),J(t=>t.serial||''),J(t=>t.useBy?fmtDate(t.useBy):''),J(t=>t.withdrawal??''),J(t=>t.withdrawal!==undefined&&t.withdrawal!==''?fmtDate(wdEnd(h.date,t.withdrawal)):''),J(t=>t.medReason||''),J(t=>t.markColour||''),J(t=>t.markType||''),s.notes,...rodentCsv(h.rodent,l.k)])}));
+    rows.push([fmtDate(h.date),h.time,h.name,h.geo?h.geo.lat:'',h.geo?h.geo.lng:'',h.geo?mapsUrl(h.geo):'',l.n,h.stock&&h.stock[l.k]!=null?h.stock[l.k]:'',...CHECKS.map(c=>!lay(l.k,h).checks.includes(c.k)?'':(chk(s,c.k)?'Yes':'No')),s.feedAdded,s.dead,s.medicated,J(t=>t.medCount||'0'),J(t=>t.medDose||''),J(t=>t.medDose?totalMl(t):''),J(t=>t.medName||''),J(t=>t.serial||''),J(t=>t.useBy?fmtDate(t.useBy):''),J(t=>t.withdrawal??''),J(t=>t.withdrawal!==undefined&&t.withdrawal!==''?fmtDate(wdEnd(h.date,t.withdrawal)):''),J(t=>t.medReason||''),J(t=>t.markColour||''),J(t=>t.markType||''),s.notes,...rodentCsv(h.rodent,l.k)])}));
   return '﻿'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
 }
 function exportCsv(){
@@ -561,17 +750,24 @@ $('export-nas').addEventListener('click',exportCsv);
 
 /* ---------- Medication serials ---------- */
 function renderSerials(){
-  $('serial-list').innerHTML=serials.length?serials.map((m,i)=>`<li><span>${esc(m.name||'Unnamed medication')}<span class="med-sub">Serial / batch: ${esc(m.serial||'–')}</span>${m.useBy?`<span class="med-sub">Use by: ${fmtDate(m.useBy)} ${m.useBy<todayISO()?'<b style="color:var(--loss)">– expired</b>':''}</span>`:'<span class="med-sub">Use by: not set</span>'}<span class="med-sub">Withdrawal: ${m.withdrawal!==''&&m.withdrawal!=null?`<b>${esc(m.withdrawal)} days</b>`:'<b style="color:var(--loss)">not set</b>'}</span>${m.usedFor?`<span class="med-sub med-use">${esc(m.usedFor)}</span>`:''}${m.refSrc?`<span class="med-sub" style="font-size:12px">Source: ${esc(m.refSrc)}</span>`:''}</span><span class="med-actions">${canWrite?`<button class="link-x link-edit" data-ed="${i}" aria-label="Edit details for ${esc(medLabel(m))}">Edit details</button><button class="link-x" data-rm="${i}" aria-label="Remove ${esc(medLabel(m))}">Remove</button>`:''}</span></li>`).join('')
+  $('serial-list').innerHTML=serials.length?serials.map((m,i)=>`<li><span>${esc(m.name||'Unnamed medication')}<span class="med-sub">Serial / batch: ${esc(m.serial||'–')}</span>${m.useBy?`<span class="med-sub">Use by: ${fmtDate(m.useBy)} ${m.useBy<todayISO()?'<b style="color:var(--loss)">– expired</b>':''}</span>`:'<span class="med-sub">Use by: not set</span>'}<span class="med-sub">Withdrawal: ${m.withdrawal!==''&&m.withdrawal!=null?`<b>${esc(m.withdrawal)} days</b>`:'<b style="color:var(--loss)">not set</b>'}</span>${m.usedFor?`<span class="med-sub med-use">${esc(m.usedFor)}</span>`:''}${m.refSrc?`<span class="med-sub" style="font-size:12px">Source: ${esc(m.refSrc)}</span>`:''}${stockHtml(m)}</span><span class="med-actions">${isAdmin()?`<button class="link-x link-edit" data-stock="${i}" aria-label="Stock for ${esc(medLabel(m))}">${hasStock(m)?'Add bottles':'Set stock'}</button><button class="link-x link-edit" data-ed="${i}" aria-label="Edit details for ${esc(medLabel(m))}">Edit details</button><button class="link-x" data-rm="${i}" aria-label="Remove ${esc(medLabel(m))}">Remove</button>`:''}</span></li>`).join('')
     :'<li style="color:var(--ink-2);font-weight:400">No medications yet. Add the first one above.</li>';
 }
 async function addSerial(){
-  const name=$('new-medname').value.trim(), v=$('new-serial').value.trim(), ub=$('new-useby').value, wd=$('new-wd').value.trim(), uf=$('new-usedfor').value.trim(); const err=$('serial-err'); err.hidden=true;
+  const name=$('new-medname').value.trim(), v=$('new-serial').value.trim(), ub=$('new-useby').value, wd=$('new-wd').value.trim(), uf=$('new-usedfor').value.trim();
+  const bml=$('new-bottleml').value.trim(), nb=$('new-bottles').value.trim(); const err=$('serial-err'); err.hidden=true;
   if(wd!==''&&(!/^\d+$/.test(wd)||+wd>365)){err.textContent='Enter the withdrawal period as a whole number of days (0–365).';err.hidden=false;$('new-wd').focus();return}
   if(!name||!v||!ub){err.textContent='Enter the medication name, serial / batch number and use by date.';err.hidden=false;(!name?$('new-medname'):!v?$('new-serial'):$('new-useby')).focus();return}
-  if(serials.some(m=>m.name.toLowerCase()===name.toLowerCase()&&m.serial.toLowerCase()===v.toLowerCase())){err.textContent='That medication and serial number are already in the list.';err.hidden=false;return}
-  try{const ref=findRef(name); await store.saveSerials([...serials,{name,serial:v,useBy:ub,withdrawal:wd,usedFor:uf,refSrc:ref&&ref.wd===wd?ref.src:(wd||uf?'Entered by user':'')}]);$('new-medname').value='';$('new-serial').value='';$('new-useby').value='';$('new-wd').value='';$('new-usedfor').value='';$('ref-box').hidden=true;$('new-medname').focus();toast('Medication added')}
+  if(!(+bml>0)){err.textContent='Enter the bottle size in ml.';err.hidden=false;$('new-bottleml').focus();return}
+  if(!/^\d+$/.test(nb)||+nb<1){err.textContent='Enter how many bottles (a whole number).';err.hidden=false;$('new-bottles').focus();return}
+  if(serials.some(m=>m.name.toLowerCase()===name.toLowerCase()&&m.serial.toLowerCase()===v.toLowerCase())){err.textContent='That medication and serial number are already in the list. Use "Add bottles" on it instead.';err.hidden=false;return}
+  try{const ref=findRef(name); await store.saveSerials([...serials,{name,serial:v,useBy:ub,withdrawal:wd,usedFor:uf,refSrc:ref&&ref.wd===wd?ref.src:(wd||uf?'Entered by user':''),bottleMl:+bml,bottles:+nb,addedAt:Date.now()}]);
+    ['new-medname','new-serial','new-useby','new-wd','new-usedfor','new-bottleml','new-bottles'].forEach(id=>$(id).value='');$('new-total').hidden=true;$('ref-box').hidden=true;$('new-medname').focus();toast('Medication added')}
   catch(e){err.textContent='Medication not added. Try again.';err.hidden=false}
 }
+function showNewTotal(){const b=+$('new-bottleml').value,n=+$('new-bottles').value,o=$('new-total');
+  if(b>0&&n>0){o.hidden=false;o.textContent=`Total in stock: ${n} × ${+b} ml = ${fmtL(b*n)}`}else o.hidden=true}
+['new-bottleml','new-bottles'].forEach(id=>$(id).addEventListener('input',showNewTotal));
 $('add-serial').addEventListener('click',addSerial);
 /* ---------- Symptoms & dosage ---------- */
 $('sym-pick').innerHTML='<option value="">Choose a symptom</option>'+SYMPTOMS.map((x,i)=>`<option value="${i}">${esc(x.n)}</option>`).join('');
@@ -616,6 +812,24 @@ $('new-medname').addEventListener('change',showRef);
 $('new-medname').addEventListener('input',()=>{if(findRef($('new-medname').value)&&$('new-medname').value.length>=4)showRef()});
 ['new-serial','new-medname'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')addSerial()}));
 $('serial-list').addEventListener('click',async e=>{
+  const si=e.target.dataset.stock;
+  if(si!==undefined){
+    const m={...serials[+si]};
+    if(!hasStock(m)){
+      const b=prompt(`Bottle size in ml for ${medLabel(m)}`,''); if(b===null)return;
+      if(!(+b>0)){toast('Enter the bottle size in ml');return}
+      const n=prompt('How many bottles in stock now?',''); if(n===null)return;
+      if(!/^\d+$/.test(n.trim())||+n<1){toast('Enter a whole number of bottles');return}
+      m.bottleMl=+b; m.bottles=+n; m.addedAt=Date.now();   // usage counts from now
+    } else {
+      const n=prompt(`How many ${m.bottleMl} ml bottles of ${medLabel(m)} are you adding? (${fmtL(mlLeft(m))} left now)\n\nTo take bottles off, enter a minus number, e.g. -1.`,'1'); if(n===null)return;
+      if(!/^-?\d+$/.test(n.trim())||+n===0){toast('Enter a whole number of bottles');return}
+      if(+m.bottles+ +n<0){toast('That would leave fewer than 0 bottles');return}
+      m.bottles=+m.bottles+ +n;
+    }
+    try{await store.saveSerials(serials.map((x,j)=>j===+si?m:x));toast(`Stock saved – ${fmtL(mlLeft(m))} left`)}catch(err){toast('Stock not saved. Try again.')}
+    return;
+  }
   const ei=e.target.dataset.ed;
   if(ei!==undefined){
     const m={...serials[+ei]}; const ref=findRef(m.name);
@@ -653,7 +867,7 @@ function renderPigs(){
   const wk=addDays(todayISO(),-6);
   const dead7={}; LOCS.forEach(l=>dead7[l.k]=0);
   history.forEach(h=>{if(h.date>=wk)LOCS.forEach(l=>dead7[l.k]+=+((h.locs||{})[l.k]||{}).dead||0)});
-  $('pig-areas').innerHTML=LOCS.map(l=>`<div class="pig-area"><span class="tag">${l.n}</span><span class="pig-n${s[l.k]<0?' n':''}">${s[l.k]}</span><span class="hint">${dead7[l.k]?`<b class="n">${dead7[l.k]} dead</b> in 7 days`:'No deaths in 7 days'}</span></div>`).join('')
+  $('pig-areas').innerHTML=LOCS.map(l=>`<div class="pig-area"><span class="tag">${esc(l.n)}</span><span class="pig-n${s[l.k]<0?' n':''}">${s[l.k]}</span><span class="hint">${dead7[l.k]?`<b class="n">${dead7[l.k]} dead</b> in 7 days`:'No deaths in 7 days'}</span></div>`).join('')
     +(LOCS.some(l=>s[l.k]<0)?'<div class="err">An area shows below zero – do a stock count to set the right number.</div>':'');
   const ev=stockEvents().reverse().slice(0,150);
   $('mv-list').innerHTML=ev.length?ev.map(e=>{
@@ -662,12 +876,12 @@ function renderPigs(){
       :e.type==='in'?`<b>+${e.qty}</b> pigs in to ${esc(areaName(e.area))}`
       :e.type==='dead'?`<b class="n">−${e.qty}</b> dead in ${esc(areaName(e.area))} <span class="med-sub">From inspection</span>`
       :`<b>−${e.qty}</b> ${e.type==='sold'?'sold from':'out of'} ${esc(areaName(e.area))}`;
-    return `<li><span>${what}<span class="med-sub">${fmtDate(e.date)}${e.by?' · '+esc(e.by):''}${e.note?' · '+esc(e.note):''}</span></span>${e.src==='mv'&&!WORKER?`<button class="link-x" data-rmmv="${esc(e.id)}">Remove</button>`:''}</li>`}).join('')
+    return `<li><span>${what}<span class="med-sub">${fmtDate(e.date)}${e.by?' · '+esc(e.by):''}${e.note?' · '+esc(e.note):''}</span></span>${e.src==='mv'&&isAdmin()?`<button class="link-x" data-rmmv="${esc(e.id)}">Remove</button>`:''}</li>`}).join('')
     :'<li style="color:var(--ink-2);font-weight:400">Nothing recorded yet. Start with a stock count for each area.</li>';
 }
 function fillMvForm(){
-  const opts=LOCS.map(l=>`<option value="${l.k}">${l.n}</option>`).join('');
-  $('mv-area').innerHTML=opts; $('mv-to').innerHTML=opts; $('mv-to').value=LOCS[1].k;
+  const opts=LOCS.map(l=>`<option value="${l.k}">${esc(l.n)}</option>`).join('');
+  $('mv-area').innerHTML=opts; $('mv-to').innerHTML=opts; $('mv-to').value=(LOCS[1]||LOCS[0]||{}).k||'';
   $('mv-date').value=todayISO(); mvTypeChanged();
 }
 function mvTypeChanged(){
@@ -678,7 +892,7 @@ function mvTypeChanged(){
 }
 $('mv-type').addEventListener('change',mvTypeChanged);
 $('mv-save').addEventListener('click',async()=>{
-  if(WORKER)return;
+  if(!isAdmin())return;
   const err=$('mv-err'); err.hidden=true;
   const type=$('mv-type').value, area=$('mv-area').value, toArea=$('mv-to').value, qty=$('mv-qty').value.trim(), date=$('mv-date').value;
   if(!/^\d+$/.test(qty)||(type!=='count'&&+qty===0)){err.textContent='Enter the number of pigs.';err.hidden=false;$('mv-qty').focus();return}
@@ -686,12 +900,12 @@ $('mv-save').addEventListener('click',async()=>{
   if(type==='transfer'&&area===toArea){err.textContent='Choose two different areas.';err.hidden=false;return}
   const now=new Date(),p=n=>String(n).padStart(2,'0');
   const time=date===todayISO()?`${p(now.getHours())}:${p(now.getMinutes())}`:'12:00';
-  await store.addMovement({type,area,toArea:type==='transfer'?toArea:'',qty:+qty,date,time,note:$('mv-note').value.trim(),by:form.name||'',createdAt:Date.now()});
+  await store.addMovement({type,area,toArea:type==='transfer'?toArea:'',qty:+qty,date,time,note:$('mv-note').value.trim(),by:me?me.name:(form.name||''),createdAt:Date.now()});
   $('mv-qty').value=''; $('mv-note').value='';
   toast(type==='count'?`${areaName(area)} set to ${qty} pigs`:'Saved');
 });
 $('mv-list').addEventListener('click',e=>{
-  const id=e.target.dataset.rmmv; if(!id||WORKER)return;
+  const id=e.target.dataset.rmmv; if(!id||!isAdmin())return;
   if(!confirm('Remove this entry? Pig numbers will be worked out again without it.'))return;
   store.deleteMovement(id); toast('Entry removed');
 });
@@ -735,7 +949,7 @@ function renderSyncState(){
 
 /* ---------- PDF report for the NAS ---------- */
 const pdfText=s=>String(s??'').replace(/→/g,'->').replace(/[✅]/g,'Yes').replace(/[❌]/g,'No').replace(/[^\x20-\x7E\xA0-\xFF–—‘’“”•…€]/g,'');
-async function makeReportPdf(h){
+async function makeReportPdf(h,photos){
   const {PDFDocument,StandardFonts,rgb}=PDFLib;
   const doc=await PDFDocument.create(); doc.setTitle(`Pig inspection ${fmtDate(h.date)} ${h.time}`); doc.setAuthor(h.name||'');
   const F=await doc.embedFont(StandardFonts.Helvetica), B=await doc.embedFont(StandardFonts.HelveticaBold);
@@ -752,16 +966,16 @@ async function makeReportPdf(h){
   page.drawText(pdfText(`${fmtDate(h.date)} at ${h.time}  ·  Inspected by ${h.name}`),{x:M,y:H-60,size:11,font:F,color:rgb(.85,.9,.87)});
   y=H-92;
   if(h.geo)text(`Location: ${h.geo.lat.toFixed(6)}, ${h.geo.lng.toFixed(6)}  (${mapsUrl(h.geo)})`,{size:9,color:grey});
-  const totalPigs=h.stock?LOCS.reduce((a,l)=>a+(+h.stock[l.k]||0),0):null;
+  const totalPigs=h.stock?recLocs(h).reduce((a,l)=>a+(+h.stock[l.k]||0),0):null;
   text(`Dead pigs: ${h.totalDead||0}  ·  Pigs medicated: ${h.totalMedicated||0}${totalPigs!=null?`  ·  Pigs on farm before this inspection: ${totalPigs}`:''}`,{size:11,bold:true,color:h.totalDead?red:rgb(0,0,0)});
   rule();
-  for(const l of LOCS){
+  for(const l of recLocs(h)){
     const s=(h.locs||{})[l.k]; if(!s)continue;
     need(60);
     const pigs=h.stock&&h.stock[l.k]!=null?(+s.dead?`${h.stock[l.k]} -> ${h.stock[l.k]-(+s.dead)} pigs`:`${h.stock[l.k]} pigs`):'';
     text(`${l.n}${pigs?'   ('+pigs+')':''}`,{size:13,bold:true,color:green,gap:5});
-    text(checksFor(l.k).map(c=>`${c.n}: ${chk(s,c.k)?'Yes':'No'}`).join('   ·   '),{size:9.5});
-    text(`${hasFeed(l.k)||s.feedAdded?`Feed: ${s.feedAdded||'not recorded'}  ·  `:''}Dead pigs: ${s.dead||0}`,{size:9.5,bold:+s.dead>0,color:+s.dead>0?red:rgb(0,0,0)});
+    text(checksFor(l.k,h).map(c=>`${c.n}: ${chk(s,c.k)?'Yes':'No'}`).join('   ·   '),{size:9.5});
+    text(`${hasFeed(l.k,h)||s.feedAdded?`Feed: ${s.feedAdded||'not recorded'}  ·  `:''}Dead pigs: ${s.dead||0}`,{size:9.5,bold:+s.dead>0,color:+s.dead>0?red:rgb(0,0,0)});
     const ts=treats(s);
     if(ts.length)ts.forEach((t,i)=>{
       text(`Medication${ts.length>1?' '+(i+1):''}: ${medLabel({name:t.medName,serial:t.serial})||'not recorded'} – ${t.medCount||0} pigs × ${t.medDose||'?'} ml (${totalMl(t)} ml total)${t.useBy?`, use by ${fmtDate(t.useBy)}`:''}`,{size:9.5});
@@ -770,20 +984,37 @@ async function makeReportPdf(h){
     });
     else text('Medicated: No',{size:9.5});
     if(s.notes)text(`Notes: ${s.notes}`,{size:9.5,color:grey});
+    const ph=(photos||[]).filter(p=>p.area===l.k);
+    if(ph.length){
+      text(`Photos (${ph.length})`,{size:9.5,bold:true,gap:5});
+      const cw=(W-2*M-12)/2, chMax=190; let col=0,top=0,bottom=0;
+      for(const p of ph){
+        let img; try{img=await doc.embedJpg(p.data)}catch(e){continue}
+        const sc=Math.min(cw/img.width,chMax/img.height), w=img.width*sc, ih=img.height*sc;
+        if(col===0){need(chMax+18); top=y; bottom=y}
+        const x=M+col*(cw+12);
+        page.drawImage(img,{x,y:top-ih,width:w,height:ih});
+        page.drawText(pdfText(p.label),{x,y:top-ih-11,size:8,font:F,color:grey});
+        bottom=Math.min(bottom,top-ih-16);
+        if(++col===2){col=0; y=bottom-4}
+      }
+      if(col===1)y=bottom-4;
+    } else if(h.photos&&h.photos.some(p=>p.area===l.k))
+      text(`Photos on the NAS: ${h.photos.filter(p=>p.area===l.k).map(p=>p.file.split('/').pop()).join(', ')}`,{size:9,color:grey});
     rule();
   }
   const r=h.rodent;
   if(r&&r.areas){
     need(60); text('Rodent control',{size:13,bold:true,color:green,gap:5});
-    LOCS.forEach(l=>{const a=r.areas[l.k]||{boxes:'0'};text(`${l.n}: ${a.boxes} bait boxes checked${a.evidence?' – EVIDENCE OF RODENTS':''}${a.restock?' – restock required':''}`,{size:9.5,color:a.evidence?red:rgb(0,0,0)})});
+    Object.keys(r.areas).forEach(k=>{const l={k,n:areaName(k)};const a=r.areas[k]||{boxes:'0'};text(`${l.n}: ${a.boxes} bait boxes checked${a.evidence?' – EVIDENCE OF RODENTS':''}${a.restock?' – restock required':''}`,{size:9.5,color:a.evidence?red:rgb(0,0,0)})});
     text(`Total bait boxes checked: ${rodentTotal(r)}${r.poisonType||r.poisonName?`  ·  Poison used: ${[r.poisonType,r.poisonName].filter(Boolean).join(' – ')}`:''}`,{size:9.5,bold:true});
     if(r.notes)text(`Notes: ${r.notes}`,{size:9.5,color:grey});
   }
   doc.getPages().forEach((p,i,a)=>p.drawText(pdfText(`Pig Inspection app · ${fmtDate(h.date)} ${h.time} · ${h.name} · page ${i+1} of ${a.length}`),{x:M,y:22,size:8,font:F,color:grey}));
   return doc.saveAsBase64();
 }
-async function queueReportPdf(h){
-  const b64=await makeReportPdf(h);
+async function queueReportPdf(h,photos){
+  const b64=await makeReportPdf(h,photos);
   const safe=String(h.name||'').replace(/[^A-Za-z0-9 _-]/g,'').trim()||'unknown';
   const [y,m]=h.date.split('-');
   NAS.putFile(`Reports/${y}/${y}-${m}/${h.date} ${String(h.time||'').replace(':','')} - ${safe}.pdf`,{bodyBase64:b64,contentType:'application/pdf'});
@@ -794,20 +1025,18 @@ const DEFAULT_OPERATIVES=['Richard Gwilliam','Wayne McFarlane'];
 let lastSerialsJson='';
 function refreshFromNas(){
   loadFromNas();
-  const sj=JSON.stringify(serials);
+  const sj=JSON.stringify(serials)+JSON.stringify(LOCS);
   renderHistory(); renderSerials(); renderOperatives(); renderPoisons(); renderSyncState();
-  if(sj!==lastSerialsJson){lastSerialsJson=sj; renderLocs()} else updateTotals();
+  if(sj!==lastSerialsJson){lastSerialsJson=sj; renderLocs(); fillMvForm(); if(window.fillStatsAreas)fillStatsAreas(); if(!farmDirty)renderFarm()} else updateTotals();
   if(!$('view-pigs').hidden)renderPigs();
   if(!$('view-stats').hidden&&window.renderStats)renderStats();
 }
 form.name=local.get('name','');
-loadFromNas(); lastSerialsJson=JSON.stringify(serials);
+loadFromNas(); lastSerialsJson=JSON.stringify(serials)+JSON.stringify(LOCS);
 fillDetails(); renderLocs(); renderHistory(); renderSerials(); renderOperatives(); renderPoisons(); fillMvForm(); fillNasForm(); renderSyncState();
 NAS.onChange(refreshFromNas);
 NAS.onChange(()=>{const st=NAS.state; if(NAS.configured()&&st.lastSync&&!st.busy&&!st.lastError&&NAS.setting('operatives',undefined)===undefined)NAS.setSetting('operatives',DEFAULT_OPERATIVES)});
 setInterval(renderSyncState,30000);
-$('app-version').textContent=`Pig Inspection ${WORKER?'– worker version':'– manager version'}${NAS.isNative()?'':' (browser)'}`;
-if(WORKER){$('mv-panel').hidden=true;$('pigs-hint').textContent='Dead pigs recorded in each saved inspection are taken off automatically. Only the manager can record stock counts, pigs in, moves and sales.'}
 NAS.sync();
 
 /* ---------- Setup banner ---------- */
@@ -820,3 +1049,187 @@ function renderBanner(){
 $('setup-banner').addEventListener('click',()=>document.querySelector('.tabs button[data-view="ops"]').click());
 NAS.onChange(renderBanner);
 renderBanner();
+
+/* ---------- Sign in ----------
+   Everyone signs in with their name and a PIN (4–6 digits). The phone stays signed in until "Sign out".
+   The first time the new version reaches the NAS with no users list, it makes one from the operatives:
+   Wayne McFarlane is admin, everyone else is a user, and each person chooses their PIN when they first sign in. */
+const FIRST_ADMIN='Wayne McFarlane';
+let gateKey=''; let pinFor=''; let forceSetup=false;
+function bootstrapAccounts(){
+  if(accounts||!NAS.configured())return;
+  const st=NAS.state; if(!st.pulled||st.busy||st.lastError)return;   // only once this phone has actually checked the NAS
+  const names=NAS.setting('operatives',DEFAULT_OPERATIVES).filter(x=>typeof x==='string');
+  if(!names.includes(FIRST_ADMIN))names.push(FIRST_ADMIN);
+  const acc={}; names.forEach(n=>acc[n]={role:n===FIRST_ADMIN?'admin':'user',pin:''});
+  writeAccounts(acc); loadFromNas();
+}
+function setSetupMode(on){
+  document.body.classList.toggle('setup-only',on);
+  if(on){document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x.dataset.view==='ops'));
+    ['inspect','pigs','history','stats','meds','ops'].forEach(v=>$('view-'+v).hidden=v!=='ops'); $('savebar').hidden=true}
+}
+function signIn(name){
+  me={name,role:accounts[name].role}; local.set('me',name); pinFor='';
+  form.name=name; local.set('name',name);
+  applyRole(); updateGate(); toast(`Signed in as ${name}`);
+}
+function signOut(msg){
+  me=null; local.set('me',''); pinFor=''; applyRole(); updateGate(true);
+  if(msg)toast(msg);
+}
+function applyRole(){
+  document.body.classList.toggle('role-user',!!me&&!isAdmin());
+  $('me-name').textContent=me?me.name:'';
+  $('me-role').textContent=me?(isAdmin()?'Admin – full access':'User – can carry out inspections and view records'):'';
+  $('me-role').className='role-badge'+(isAdmin()?' admin':'');
+  $('app-version').textContent=`Pig Inspection${NAS.isNative()?'':' (browser)'}`;
+  $('pigs-hint').textContent=isAdmin()?'Dead pigs recorded in each saved inspection are taken off automatically.'
+    :'Dead pigs recorded in each saved inspection are taken off automatically. Only an admin can record stock counts, pigs in, moves and sales.';
+  renderOperatives(); renderHistory(); renderSerials(); renderPoisons(); if(!$('view-pigs').hidden)renderPigs();
+}
+/* Keep the signed-in person in step with the NAS list (removed, or role changed by an admin) */
+function checkMe(){
+  if(!me||!accounts)return;
+  const a=accounts[me.name];
+  if(!a){signOut(`${me.name} has been removed by an admin`);return}
+  if(a.role!==me.role){me.role=a.role; applyRole(); toast(`You are now ${a.role==='admin'?'an admin':'a user'}`)}
+}
+function gateHtml(view){
+  const st=NAS.state;
+  if(view==='wait')return `<p class="gate-msg">Connecting to the NAS to get the list of users…</p>
+    ${st.lastError?`<div class="err">${esc(st.lastError)}</div><p class="hint">The first time, this phone needs signal or Wi-Fi.</p>`:''}
+    <button class="btn btn-primary" id="g-retry">Try again</button>
+    <button class="btn btn-quiet" id="g-setup">NAS connection settings</button>`;
+  if(view==='create'){
+    return `<p class="gate-msg"><b>${esc(pinFor)}</b>, choose a PIN of 4 to 6 numbers. You'll use it to sign in.</p>
+      <label for="g-pin1">New PIN</label><input type="password" id="g-pin1" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <label for="g-pin2">Type it again</label><input type="password" id="g-pin2" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <div class="err" id="g-err" hidden></div>
+      <button class="btn btn-primary" id="g-create">Save PIN and sign in</button>
+      <button class="btn btn-quiet" id="g-back">Back</button>`;
+  }
+  const names=Object.keys(accounts).sort((a,b)=>a.localeCompare(b)); const last=local.get('name','');
+  return `<label for="g-name">Your name</label>
+    <select id="g-name"><option value="">Select your name</option>${names.map(n=>`<option${n===last?' selected':''}>${esc(n)}</option>`).join('')}</select>
+    <label for="g-pin">PIN</label><input type="password" id="g-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="First time? Leave blank">
+    <div class="err" id="g-err" hidden></div>
+    <button class="btn btn-primary" id="g-go">Sign in</button>
+    <p class="hint">Not on the list? Ask an admin to add you in Settings.</p>`;
+}
+function updateGate(force){
+  if(!NAS.configured()||forceSetup){$('gate').hidden=true; setSetupMode(true); return}
+  setSetupMode(false);
+  bootstrapAccounts();
+  if(me&&accounts&&accounts[me.name]){$('gate').hidden=true; document.body.classList.remove('locked'); return}
+  if(me&&accounts&&!accounts[me.name]){me=null; local.set('me','')}
+  const view=!accounts?'wait':pinFor?'create':'signin';
+  const key=view+'|'+(view==='wait'?NAS.state.lastError+NAS.state.busy:JSON.stringify(Object.keys(accounts||{}))+pinFor);
+  $('gate').hidden=false; document.body.classList.add('locked');
+  if(key===gateKey&&!force)return;   // don't wipe what someone is typing
+  gateKey=key; $('gate-body').innerHTML=gateHtml(view);
+  const f=$('g-pin')||$('g-pin1'); if(f&&view!=='signin')f.focus();
+}
+function gateErr(m){const e=$('g-err');e.textContent=m;e.hidden=false}
+$('gate').addEventListener('click',e=>{
+  const id=e.target.id;
+  if(id==='g-retry'){NAS.sync()}
+  else if(id==='g-setup'){forceSetup=true; updateGate()}
+  else if(id==='g-back'){pinFor=''; updateGate(true)}
+  else if(id==='g-go'){
+    const n=$('g-name').value, p=$('g-pin').value.trim(), a=accounts[n];
+    if(!n||!a)return gateErr('Select your name.');
+    if(!a.pin){pinFor=n; updateGate(true); return}
+    if(!p)return gateErr('Enter your PIN.');
+    if(pinHash(n,p)!==a.pin){$('g-pin').value='';return gateErr('Wrong PIN. If you have forgotten it, ask an admin to reset it.')}
+    signIn(n);
+  }
+  else if(id==='g-create'){
+    const p1=$('g-pin1').value.trim(), p2=$('g-pin2').value.trim();
+    if(!validPin(p1))return gateErr('The PIN must be 4 to 6 numbers.');
+    if(p1!==p2)return gateErr("The two PINs don't match.");
+    const a=accounts[pinFor]; if(!a){pinFor='';updateGate(true);return}
+    if(a.pin)return gateErr('A PIN has already been set for this name. Go back and sign in.');
+    writeAccounts({...accounts,[pinFor]:{...a,pin:pinHash(pinFor,p1)}});
+    signIn(pinFor);
+  }
+});
+$('gate').addEventListener('keydown',e=>{if(e.key!=='Enter')return; const b=$('g-go')||$('g-create'); if(b)b.click()});
+$('setup-back').addEventListener('click',()=>{forceSetup=false; updateGate(true)});
+$('sign-out').addEventListener('click',()=>{if(confirm('Sign out of this phone?'))signOut()});
+$('change-pin').addEventListener('click',()=>{
+  if(!me)return; const a=accounts[me.name];
+  const old=prompt('Enter your current PIN'); if(old===null)return;
+  if(pinHash(me.name,old.trim())!==a.pin){toast('Wrong PIN');return}
+  const p1=prompt('New PIN (4 to 6 numbers)'); if(p1===null)return;
+  if(!validPin(p1.trim())){toast('The PIN must be 4 to 6 numbers');return}
+  const p2=prompt('Type the new PIN again'); if(p2===null)return;
+  if(p1.trim()!==p2.trim()){toast("The PINs don't match");return}
+  writeAccounts({...accounts,[me.name]:{...a,pin:pinHash(me.name,p1.trim())}}); toast('PIN changed');
+});
+{ const saved=local.get('me',''); if(saved&&accounts&&accounts[saved])me={name:saved,role:accounts[saved].role}; }
+if(me)form.name=me.name;
+applyRole(); fillDetails(); updateGate();
+NAS.onChange(()=>{checkMe(); updateGate()});
+
+/* ---------- Farm setup menu (admin) ---------- */
+function renderFarm(){
+  farmDraft=JSON.parse(JSON.stringify(ALL_AREAS.filter(a=>!a.removed))); farmDirty=false; drawFarm();
+}
+function drawFarm(){
+  $('farm-list').innerHTML=farmDraft.length?farmDraft.map((a,i)=>{const eq=a.equip||(a.equip={});
+    const ck=checkKeysFor(eq).map(k=>CHECKS.find(c=>c.k===k).n).concat(eq.manualFeed?['Feed added']:[]);
+    return `<div class="farm-area" data-fi="${i}">
+      <div class="fa-head"><div><label class="lbl" for="fa-n${i}">Name</label><input type="text" id="fa-n${i}" data-fname="${i}" value="${esc(a.n)}" placeholder="e.g. Shed 4" autocomplete="off"></div>
+        <span class="fa-move"><button type="button" data-fup="${i}" aria-label="Move up"${i?'':' disabled'}>▲</button><button type="button" data-fdown="${i}" aria-label="Move down"${i<farmDraft.length-1?'':' disabled'}>▼</button></span>
+        <button type="button" class="fa-rm" data-frm="${i}">Remove</button></div>
+      <div class="fa-equip">${EQUIP.map(e=>`<div class="check"><input type="checkbox" id="fa-${i}-${e.k}" data-feq="${i}|${e.k}"${eq[e.k]?' checked':''}><label for="fa-${i}-${e.k}"><span class="box">${TICK}</span>${e.n}</label></div>`).join('')}</div>
+      <div class="fa-checks">Tick boxes: ${esc(ck.join(' · '))}</div></div>`}).join('')
+    :'<div class="hint" style="margin-top:10px">No sheds yet. Add the first one below.</div>';
+}
+$('farm-list').addEventListener('input',e=>{
+  const t=e.target;
+  if(t.dataset.fname!==undefined){farmDraft[+t.dataset.fname].n=t.value; farmDirty=true; return}
+  if(t.dataset.feq){const [i,k]=t.dataset.feq.split('|'); farmDraft[+i].equip[k]=t.checked; farmDirty=true;
+    const box=t.closest('.farm-area').querySelector('.fa-checks'); const eq=farmDraft[+i].equip;
+    box.textContent='Tick boxes: '+checkKeysFor(eq).map(k=>CHECKS.find(c=>c.k===k).n).concat(eq.manualFeed?['Feed added']:[]).join(' · ')}
+});
+$('farm-list').addEventListener('click',e=>{
+  const d=e.target.dataset;
+  if(d.fup!==undefined){const i=+d.fup;[farmDraft[i-1],farmDraft[i]]=[farmDraft[i],farmDraft[i-1]]}
+  else if(d.fdown!==undefined){const i=+d.fdown;[farmDraft[i+1],farmDraft[i]]=[farmDraft[i],farmDraft[i+1]]}
+  else if(d.frm!==undefined){const a=farmDraft[+d.frm]; if(!confirm(`Remove ${a.n||'this area'}? Saved inspections and pig numbers for it are kept.`))return; farmDraft.splice(+d.frm,1)}
+  else return;
+  farmDirty=true; drawFarm();
+});
+$('farm-add').addEventListener('click',()=>{
+  farmDraft.push({k:'a'+Date.now().toString(36),n:'',equip:{}}); farmDirty=true; drawFarm();
+  const el=$(`fa-n${farmDraft.length-1}`); if(el){el.focus(); el.scrollIntoView({block:'center'})}
+});
+$('farm-save').addEventListener('click',()=>{
+  if(!isAdmin())return;
+  const err=$('farm-err'); err.hidden=true;
+  farmDraft.forEach(a=>a.n=String(a.n||'').trim().replace(/\s+/g,' '));
+  const bad=farmDraft.findIndex(a=>!a.n);
+  if(!farmDraft.length){err.textContent='Add at least one shed or area.';err.hidden=false;return}
+  if(bad>=0){err.textContent='Give every shed or area a name.';err.hidden=false;$(`fa-n${bad}`).focus();return}
+  const names=farmDraft.map(a=>a.n.toLowerCase()); if(new Set(names).size!==names.length){err.textContent='Two areas have the same name.';err.hidden=false;return}
+  const noDrink=farmDraft.filter(a=>!a.equip.trough&&!a.equip.nipple).map(a=>a.n);
+  if(noDrink.length&&!confirm(`${noDrink.join(', ')} ${noDrink.length===1?'has':'have'} no drinkers ticked, so there will be no drinker checks. Save anyway?`))return;
+  // Keep removed areas (marked removed) so old inspections and pig numbers still show their names
+  const removed=ALL_AREAS.filter(a=>!farmDraft.some(d=>d.k===a.k)).map(a=>({...a,removed:true}));
+  const list=[...farmDraft.map(a=>({k:a.k,n:a.n,equip:Object.fromEntries(Object.entries(a.equip).filter(([,v])=>v))})),...removed];
+  NAS.setSetting('areas',list); local.set('farmSetupDone',true);
+  farmDirty=false; loadFromNas(); lastSerialsJson=''; refreshFromNas();
+  toast('Farm setup saved – every phone gets it on the next sync');
+});
+renderFarm();
+/* First admin sign-in on a farm that has never been set up: open the setup menu */
+function promptFarmSetup(){
+  if(!isAdmin()||NAS.setting('areas',null)||local.get('farmSetupDone',false)||!NAS.state.pulled)return;
+  local.set('farmSetupDone',true);
+  document.querySelector('.tabs button[data-view="ops"]').click();
+  setTimeout(()=>$('farm-panel').scrollIntoView({block:'start'}),50);
+  toast('First, check the sheds and their equipment, then tap Save farm setup');
+}
+NAS.onChange(promptFarmSetup); promptFarmSetup();

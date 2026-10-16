@@ -47,7 +47,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tabs button[aria-selected="true"]{color:#fff;border-bottom-color:var(--tag)}
 
 main{max-width:760px;margin:0 auto;padding:16px 16px 120px}
-.view[hidden]{display:none}
+.view[hidden],.gate[hidden],[hidden]{display:none!important}
 
 /* Inspection details */
 .details{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
@@ -261,7 +261,7 @@ th{color:var(--ink-2);font-weight:600}
   .tabs button{font-size:13px;padding:10px 0 12px}
   .pig-total b{font-size:34px}
   .sym-grid{grid-template-columns:1fr}
-  .rod-row{grid-template-columns:1fr 1fr;row-gap:6px}
+  .rod-row{grid-template-columns:1fr;row-gap:8px}
   .rod-row > div:first-child{grid-column:1/-1}
   .rod-headrow{display:none}
   .tab-long{display:none}.tab-short{display:inline}
@@ -274,10 +274,74 @@ th{color:var(--ink-2);font-weight:600}
   .checks{grid-template-columns:1fr}
   .row,.row3,.add-grid{grid-template-columns:1fr}
 }
+/* Camera buttons and photos */
+.check-cam{display:flex;gap:6px;align-items:stretch;min-width:0}
+.check-cam .check{flex:1;min-width:0}
+.cam-btn{flex:none;position:relative;width:52px;min-height:46px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;background:var(--input);color:var(--ink-2);cursor:pointer;padding:0}
+.cam-btn:active{background:var(--line)}
+.cam-btn.has{border-color:var(--field-2);color:var(--ink)}
+.cam-n{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;border-radius:10px;background:var(--tag);color:var(--tag-ink);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px}
+.photo-strip{display:flex;gap:8px;flex-wrap:wrap}
+.photo-strip:not(:empty){margin-top:10px}
+.photo{position:relative;margin:0;width:104px}
+.photo img{width:104px;height:78px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:block}
+.photo figcaption{font-size:11px;line-height:1.25;color:var(--ink-2);margin-top:3px;overflow-wrap:anywhere}
+.photo-x{position:absolute;top:-7px;right:-7px;width:26px;height:26px;border-radius:13px;border:none;background:var(--loss);color:#fff;font-size:17px;line-height:1;cursor:pointer}
+/* Farm setup */
+.farm-area{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;background:var(--input)}
+.farm-area .fa-head{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.farm-area .fa-head > div{flex:1 1 100%;min-width:0}
+.fa-head .fa-rm{margin-left:auto}
+.farm-area label.lbl{display:block;font-size:14px;font-weight:600;color:var(--ink-2);margin-bottom:4px}
+.farm-area .fa-head input{background:var(--card)}
+.fa-move{display:flex;gap:4px}
+.fa-move button,.fa-rm{min-height:46px;min-width:42px;border:1px solid var(--line);border-radius:8px;background:var(--card);cursor:pointer;color:var(--ink-2)}
+.fa-rm{color:var(--loss);padding:0 10px}
+.fa-equip{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.fa-equip .check label{min-height:46px;background:var(--card)}
+.fa-checks{margin-top:8px;font-size:13px;color:var(--ink-2)}
+.farm-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.farm-actions .btn{flex:1}
+@media (max-width:480px){.fa-equip{grid-template-columns:1fr}}
+/* Medication stock */
+.stock-total{font-weight:600;color:var(--ink)}
+.stock-line{display:block;margin-top:3px;font-weight:600}
+.stock-line.low{color:var(--loss)}
+.stock-line.ok{color:var(--ok)}
+/* Sign in and permissions */
+.gate{position:fixed;inset:0;z-index:100;background:var(--field);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 48px) 16px 32px}
+.gate-card{width:100%;max-width:400px;background:var(--card);border-radius:14px;padding:22px 20px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.gate-card h1{margin:0 0 2px;font:700 30px/1.1 'Barlow Condensed',sans-serif;color:var(--ink)}
+.gate-card .sub{color:var(--ink-2);margin:0 0 16px}
+#gate-body{display:flex;flex-direction:column;gap:6px}
+#gate-body label{margin-top:6px;font-size:14px;font-weight:600;color:var(--ink-2)}
+#gate-body input[type=password]{background:var(--input);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:46px;font-size:20px;letter-spacing:4px}
+#gate-body input::placeholder{letter-spacing:normal;font-size:15px}
+#f-name:disabled{opacity:1}
+#gate-body .btn{margin-top:10px;width:100%}
+#gate-body input,#gate-body select{width:100%}
+.gate-msg{margin:0 0 6px}
+body.locked{overflow:hidden}
+.role-badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:700;background:var(--input);color:var(--ink-2);border:1px solid var(--line);vertical-align:middle}
+.role-badge.admin{background:var(--tag);color:var(--tag-ink);border-color:transparent}
+.me-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.me-row .btns{display:flex;gap:8px;flex-wrap:wrap}
+.role-user .admin-only{display:none!important}
+.setup-only .tabs,.setup-only #savebar,.setup-only #view-ops > .panel:not(#nas-panel),.setup-only #app-version{display:none!important}
+#setup-back{display:none}
+.setup-only #setup-back{display:inline-flex;margin-top:10px}
+.add-row select{flex:none;width:auto}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <h1>Pig inspection</h1>
+    <p class="sub">Sign in to continue</p>
+    <div id="gate-body"></div>
+  </div>
+</div>
 <header class="top">
   <div class="top-in">
     <div class="brand"><h1>Pig inspection</h1><span class="sync" id="sync">Starting…</span></div>
@@ -338,7 +402,7 @@ th{color:var(--ink-2);font-weight:600}
       <div class="hint" id="pigs-hint">Dead pigs recorded in each saved inspection are taken off automatically.</div>
       <div id="pig-areas" class="pig-areas"></div>
     </div>
-    <div class="panel" style="margin-top:16px" id="mv-panel">
+    <div class="panel admin-only" style="margin-top:16px" id="mv-panel">
       <h2 class="h2">Record pig numbers</h2>
       <div class="sym-grid" style="margin-top:10px">
         <div class="span-all"><label for="mv-type">What happened</label>
@@ -384,10 +448,26 @@ th{color:var(--ink-2);font-weight:600}
 
   <!-- SETTINGS -->
   <section class="view" id="view-ops" hidden>
-    <div class="panel">
+    <div class="panel" id="me-panel" style="margin-bottom:16px">
+      <div class="me-row">
+        <div><div class="hint" style="margin:0">Signed in as</div><b id="me-name" style="font-size:18px"></b> <span id="me-role" class="role-badge"></span></div>
+        <div class="btns"><button class="btn btn-quiet" id="change-pin">Change my PIN</button><button class="btn btn-quiet" id="sign-out">Sign out</button></div>
+      </div>
+    </div>
+    <div class="panel admin-only" id="farm-panel" style="margin-bottom:16px">
+      <h2 class="h2">Farm setup – sheds and equipment</h2>
+      <div class="hint">Name each shed or area and tick the equipment in it. The inspection tick boxes for each area are made from this: trough drinkers add <b>Drinkers cleaned</b>, nipple drinkers add <b>Nipples operational</b>, an auto feed system adds <b>Auto feed system active</b>, and manual feeders add <b>Feed added</b>. Saved inspections keep the checks they were made with.</div>
+      <div id="farm-list"></div>
+      <div class="farm-actions">
+        <button class="btn btn-quiet" id="farm-add" type="button">+ Add shed or area</button>
+        <button class="btn btn-primary" id="farm-save" type="button">Save farm setup</button>
+      </div>
+      <div class="err" id="farm-err" hidden></div>
+    </div>
+    <div class="panel" id="nas-panel">
       <h2 class="h2">Connection to the NAS</h2>
       <div class="hint">Inspections, pig numbers and the lists below are shared with every phone through the NAS. It works on Wi-Fi or mobile data – nothing else needs installing.</div>
-      <div class="sym-grid" style="margin-top:10px">
+      <div class="sym-grid admin-only" style="margin-top:10px">
         <div><label for="nas-host">Server address</label><input type="text" id="nas-host" placeholder="https://ugreen-nas….ts.net" autocomplete="off" inputmode="url" autocapitalize="off" spellcheck="false"></div>
         <div><label for="nas-port">Port</label><input type="number" id="nas-port" placeholder="blank for https" inputmode="numeric"></div>
         <div class="span-all"><label for="nas-folder">Folder</label><input type="text" id="nas-folder" placeholder="PigReports" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
@@ -397,17 +477,19 @@ th{color:var(--ink-2);font-weight:600}
         <button class="btn btn-primary span-all" id="nas-save">Save and test connection</button>
       </div>
       <div id="nas-result" class="nas-result" hidden></div>
+      <button class="btn btn-quiet" id="setup-back">Back to sign in</button>
       <div class="sync-box">
         <div id="sync-detail" class="hint"></div>
         <button class="btn btn-quiet" id="sync-now">Sync now</button>
       </div>
     </div>
     <div class="panel" style="margin-top:16px">
-      <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Operatives</h2>
-      <div class="hint">Everyone added here appears in the Inspected by drop-down.</div>
-      <div class="add-row">
-        <input type="text" id="new-op" placeholder="Operative's full name" autocomplete="off">
-        <button class="btn btn-primary" id="add-op" style="flex:none">Add operative</button>
+      <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Users and permissions</h2>
+      <div class="hint"><b>Admin</b> – full access, including pig numbers, deleting inspections, medications, poisons, users and the NAS connection.<br><b>User</b> – carries out inspections in their own name and can view history, pig numbers, stats and medications.</div>
+      <div class="add-row admin-only">
+        <input type="text" id="new-op" placeholder="Person's full name" autocomplete="off">
+        <select id="new-op-role" aria-label="Permission"><option value="user" selected>User</option><option value="admin">Admin</option></select>
+        <button class="btn btn-primary" id="add-op" style="flex:none">Add</button>
       </div>
       <ul class="serials" id="op-list"></ul>
       <div class="err" id="op-err" hidden></div>
@@ -430,11 +512,14 @@ th{color:var(--ink-2);font-weight:600}
     <div class="panel">
       <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Medications</h2>
       <div class="hint">Each medication you add here appears in the medication drop-down for every area.</div>
-      <div class="add-grid">
+      <div class="add-grid admin-only">
         <div><label for="new-medname">Medication name</label><input type="text" id="new-medname" placeholder="Start typing, e.g. Pen &amp; Strep" autocomplete="off" list="med-ref-list"></div>
         <div><label for="new-serial">Serial / batch number</label><input type="text" id="new-serial" placeholder="e.g. 4521-B" autocomplete="off"></div>
         <div><label for="new-useby">Use by date</label><input type="date" id="new-useby"></div>
         <div><label for="new-wd">Withdrawal period (days)</label><input type="number" id="new-wd" min="0" max="365" inputmode="numeric" placeholder="e.g. 28"></div>
+        <div><label for="new-bottleml">Bottle size (ml)</label><input type="number" id="new-bottleml" min="1" max="5000" step="any" inputmode="decimal" placeholder="e.g. 100"></div>
+        <div><label for="new-bottles">Number of bottles</label><input type="number" id="new-bottles" min="1" max="999" inputmode="numeric" placeholder="e.g. 2"></div>
+        <div class="span-all stock-total" id="new-total" hidden></div>
         <div class="span-all"><label for="new-usedfor">What it is used for</label><textarea id="new-usedfor" placeholder="Filled in automatically for known medications, or type your own"></textarea></div>
         <div class="span-all ref-box" id="ref-box" hidden></div>
         <button class="btn btn-primary span-all" id="add-serial">Add medication</button>
@@ -447,7 +532,7 @@ th{color:var(--ink-2);font-weight:600}
     <div class="panel" style="margin-top:16px">
       <h2 style="margin:0;font:700 22px/1.2 'Barlow Condensed',sans-serif">Rodent poisons</h2>
       <div class="hint">Each poison added here appears in the Poison name drop-down in Rodent control.</div>
-      <div class="add-row">
+      <div class="add-row admin-only">
         <input type="text" id="new-poison" placeholder="Poison name, e.g. Brodifacoum block" autocomplete="off">
         <button class="btn btn-primary" id="add-poison" style="flex:none">Add poison</button>
       </div>
@@ -482,6 +567,7 @@ th{color:var(--ink-2);font-weight:600}
     <button class="btn btn-wa" id="save-wa" title="Save and send the report on WhatsApp"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" style="flex:none"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Save &amp; send</span></button>
   </div>
 </div>
+<input type="file" id="cam-input" accept="image/*" capture="environment" hidden>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="vendor/pdf-lib.min.js"></script>

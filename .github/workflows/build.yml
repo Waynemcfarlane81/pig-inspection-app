@@ -44,20 +44,11 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Name the manager APK
+      - name: Name the APK
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/debug/app-debug.apk "out/PigInspection-Manager-v2.0.${{ github.run_number }}.apk"
-          cp android/app/build/outputs/apk/debug/app-debug.apk out/PigInspection-Manager.apk
-
-      - name: Build worker APK (can't change or delete pig numbers)
-        run: |
-          f=android/app/src/main/assets/public/config.js
-          sed -i "s/window.FARM_ROLE = 'manager'/window.FARM_ROLE = 'worker'/" "$f"
-          grep -q "FARM_ROLE = 'worker'" "$f"
-          cd android && ./gradlew assembleDebug --no-daemon
-          cd .. && cp android/app/build/outputs/apk/debug/app-debug.apk "out/PigInspection-v2.0.${{ github.run_number }}.apk"
-          # Same names every release, so .../releases/latest/download/<name>.apk always gets the newest
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/PigInspection-v2.0.${{ github.run_number }}.apk"
+          # Same name every release, so .../releases/latest/download/PigInspection.apk always gets the newest
           cp android/app/build/outputs/apk/debug/app-debug.apk out/PigInspection.apk
 
       - name: Keep APK with this run
@@ -72,7 +63,7 @@ jobs:
           tag_name: v2.0.${{ github.run_number }}
           name: Pig Inspection v2.0.${{ github.run_number }}
           body: |
-            Workers: install PigInspection.apk. Manager: install PigInspection-Manager.apk.
+            Everyone installs PigInspection.apk – admin and user permissions are set per person in Settings.
             Download the .apk on the phone and open it to install or update.
             Built from: ${{ github.event.head_commit.message }}
           files: out/*.apk
