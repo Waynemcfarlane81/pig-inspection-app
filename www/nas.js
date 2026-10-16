@@ -137,7 +137,7 @@ const NAS = (() => {
     }
   }
   async function pullSettings() {
-    for (const name of ['accounts', 'areas', 'operatives', 'medications', 'poisons']) {
+    for (const name of ['accounts', 'areas', 'farm', 'operatives', 'medications', 'poisons']) {
       if (queue.some(q => q.key === 'settings/' + name)) continue;   // our own change hasn't gone yet
       const r = await request('GET', `app-data/settings/${name}.json`);
       if (r.status === 200) { try { cache.settings[name] = JSON.parse(r.body) } catch (e) { } }

@@ -140,6 +140,9 @@ function freshForm(){
 
 /* ---------- Storage: everything goes through the NAS sync engine (nas.js) ---------- */
 const local={get:(k,d)=>NAS.lsGet(k,d),set:(k,v)=>NAS.lsSet(k,v)};
+/* Saved inspections waiting to be sent (see Time on site) */
+let held=local.get('held',[]); if(!Array.isArray(held))held=[];
+let heldMem=null;            // used if the phone's storage is too full to keep photos
 const store={
   async addInspection(rec){return NAS.put('inspections',rec)},
   /* Admin only: the buttons are hidden for users, and these refuse as well */
@@ -153,7 +156,7 @@ const store={
 const byNewest=(a,b)=>(b.date+(b.time||'')).localeCompare(a.date+(a.time||''))||((b.createdAt||0)-(a.createdAt||0));
 /* Reload everything from the local copy of the NAS data */
 function loadFromNas(){
-  history=NAS.inspections().sort(byNewest);
+  history=[...NAS.inspections(),...held.map(h=>h.rec)].sort(byNewest);
   movements=NAS.movements();
   const acc=NAS.setting('accounts',null); accounts=acc&&typeof acc==='object'&&!Array.isArray(acc)?acc:null;
   operatives=accounts?Object.keys(accounts).sort((a,b)=>a.localeCompare(b)):NAS.setting('operatives',DEFAULT_OPERATIVES).filter(x=>typeof x==='string');
@@ -625,20 +628,27 @@ async function doSave(send){
   const photos=form.photos.slice();
   const rec={name:form.name.trim(),date:form.date,time:form.time,geo:geo?{lat:geo.lat,lng:geo.lng,acc:geo.acc||null}:null,createdAt,totalDead,totalMedicated,stock:before,layout:layoutNow(),locs:JSON.parse(JSON.stringify(Object.fromEntries(LOCS.map(l=>[l.k,form.locs[l.k]])))),rodent:JSON.parse(JSON.stringify({...form.rodent,areas:Object.fromEntries(LOCS.map(l=>[l.k,form.rodent.areas[l.k]]))}))};
   if(photos.length){const dir=photoDir(rec),cnt={};rec.photos=photos.map(p=>{const k=p.area+'-'+p.item;cnt[k]=(cnt[k]||0)+1;return {area:p.area,item:p.item,label:p.label,file:`${dir}/${areaName(p.area)} - ${itemName(p.item)} ${cnt[k]}.jpg`.replace(/[^A-Za-z0-9 _\-\/.]/g,'')}})}
-  if(send)sendWhatsApp(rec);
+  rec.id=new Date(createdAt).toISOString().replace(/\D/g,'').slice(0,14)+'-'+Math.random().toString(36).slice(2,8);
+  rec.startedAt=form.startedAt||createdAt;
   $('save').disabled=true;
   try{
-    const saved=await store.addInspection(rec);
-    toast(NAS.configured()?'Inspection saved – sending to the NAS':'Inspection saved on this phone. Set up the NAS in More.');
+    /* Held on this phone until it leaves the farm (500 m) or 2 hours after the start – see "Time on site" below */
+    holdInspection(rec,photos,false);
     const n=form.name; form=freshForm(); form.name=n; fillDetails(); renderLocs(); window.scrollTo({top:0});
-    if(photos.length){photoCache[saved.id]=photos; saved.photos.forEach((m,i)=>NAS.putFile(m.file,{bodyBase64:photos[i].data,contentType:'image/jpeg'}))}
-    try{await queueReportPdf(saved,photos)}catch(e){console.error('PDF failed',e)}
+    openSendSheet(rec.id);
   }
-  catch(e){toast('Inspection not saved. Try again.')}
+  catch(e){console.error(e);toast('Inspection not saved. Try again.')}
   finally{$('save').disabled=!canWrite}
 }
+/* Send an inspection to the NAS: the record, its photos, the PDF, and WhatsApp if asked for */
+async function sendInspection(rec,photos,send){
+  const saved=await store.addInspection(rec);
+  if(photos&&photos.length&&saved.photos){photoCache[saved.id]=photos; saved.photos.forEach((m,i)=>{if(photos[i]&&photos[i].data)NAS.putFile(m.file,{bodyBase64:photos[i].data,contentType:'image/jpeg'})})}
+  try{await queueReportPdf(saved,photos)}catch(e){console.error('PDF failed',e)}
+  if(send&&!document.hidden&&confirm(`The inspection report from ${hhmm(rec.startedAt)} is ready. Send it on WhatsApp now?`))sendWhatsApp(saved);
+  return saved;
+}
 $('save').addEventListener('click',()=>doSave(false));
-$('save-wa').addEventListener('click',()=>doSave(true));
 
 /* ---------- WhatsApp report ---------- */
 const WA_NUMBER='447872898990'; // 07872 898990
@@ -646,6 +656,7 @@ function reportText(h){
   const t=v=>v?'✅':'❌'; const L=[];
   L.push(`*Pig inspection – ${fmtDate(h.date)} at ${h.time}*`);
   L.push(`Inspected by: ${h.name}`);
+  if(h.startedAt&&!h.pending)L.push(siteText(h));
   if(h.geo)L.push(`Location: ${mapsUrl(h.geo)}`);
   L.push(`Dead pigs: ${h.totalDead||0} | Pigs medicated: ${h.totalMedicated||0}`);
   if(h.photos&&h.photos.length)L.push(`📷 ${h.photos.length} photo${h.photos.length===1?'':'s'} – in the PDF report on the NAS`);
@@ -708,8 +719,8 @@ function renderHistory(){
   $('export').hidden=!history.length;
   if(!history.length){$('hist').innerHTML='<div class="empty">Saved inspections appear here. Fill in the New inspection tab and save it.</div>';return}
   $('hist').innerHTML=history.map(h=>`<details class="entry">
-    <summary><div><div class="entry-title">${fmtDate(h.date)} at ${esc(h.time)}</div><div class="entry-meta">Inspected by ${esc(h.name)}${h.geo?` · <a class="maplink" href="${mapsUrl(h.geo)}" target="_blank" rel="noopener">${esc(fmtLL(h.geo))}</a>`:''}</div></div>
-    <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${h.rodent&&h.rodent.evidence?`<span class="dead-badge loss">Rodents seen</span>`:''}${h.photos&&h.photos.length?`<span class="dead-badge">📷 ${h.photos.length}</span>`:''}${h.totalMedicated?`<span class="dead-badge med-badge">${h.totalMedicated} medicated</span>`:''}<span class="dead-badge ${h.totalDead>0?'loss':''}">${h.totalDead} dead</span></span></summary>
+    <summary><div><div class="entry-title">${fmtDate(h.date)} at ${esc(h.time)}</div><div class="entry-meta">${h.startedAt?esc(siteText(h))+'<br>':''}Inspected by ${esc(h.name)}${h.geo?` · <a class="maplink" href="${mapsUrl(h.geo)}" target="_blank" rel="noopener">${esc(fmtLL(h.geo))}</a>`:''}</div></div>
+    <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${h.pending?`<span class="dead-badge loss">${(held.find(x=>x.rec.id===h.id)||{}).queued?'Waiting to send':'Not sent'}</span>`:''}${h.rodent&&h.rodent.evidence?`<span class="dead-badge loss">Rodents seen</span>`:''}${h.photos&&h.photos.length?`<span class="dead-badge">📷 ${h.photos.length}</span>`:''}${h.totalMedicated?`<span class="dead-badge med-badge">${h.totalMedicated} medicated</span>`:''}<span class="dead-badge ${h.totalDead>0?'loss':''}">${h.totalDead} dead</span></span></summary>
     <div class="entry-body"><table><thead><tr><th>Area</th><th>Pigs</th>${histChecks(h).map(c=>`<th>${c.n}</th>`).join('')}<th>Feed</th><th>Dead</th><th>Medicated</th><th>No. medicated</th><th>Dosage</th><th>Medication / serial no.</th><th>Notes</th></tr></thead><tbody>
     ${recLocs(h).map(l=>{const s=(h.locs||{})[l.k]||blankLoc();return `<tr><td><b>${esc(l.n)}</b></td><td>${h.stock&&h.stock[l.k]!=null?(+s.dead?`${h.stock[l.k]} → ${h.stock[l.k]-(+s.dead)}`:h.stock[l.k]):'–'}</td>${histChecks(h).map(c=>`<td>${!lay(l.k,h).checks.includes(c.k)?'–':(c.k==='beddingReq'&&chk(s,c.k)?'<span class="n">Yes</span>':c.k==='beddingReq'?'No':yn(chk(s,c.k)))}</td>`).join('')}
       <td>${esc(s.feedAdded||'–')}</td><td${+s.dead>0?' class="n"':''}>${esc(s.dead)}</td><td>${esc(s.medicated)}</td><td>${(()=>{const ts=treats(s);return ts.length?ts.reduce((a,t)=>a+(+t.medCount||0),0):'–'})()}</td><td>${treats(s).map(t=>t.medDose?`${esc(t.medDose)} ml/pig<br><span class="entry-meta">${totalMl(t)} ml total</span>`:'–').join('<hr class="tsep">')||'–'}</td><td>${treats(s).map(t=>`${esc(medLabel({name:t.medName,serial:t.serial})||'–')}${t.useBy?`<br><span class="${t.useBy<h.date?'n':''}">Use by ${fmtDate(t.useBy)}</span>`:''}${t.medReason?`<br>Reason: ${esc(t.medReason)}`:''}${markText(t)?`<br>Marked: ${esc(markText(t))}`:''}${t.withdrawal!==undefined&&t.withdrawal!==''?(()=>{const e=wdEnd(h.date,t.withdrawal);const live=+t.withdrawal>0&&daysFromToday(e)>0;return `<br><span class="${live?'n':'y'}">Withdrawal: ${+t.withdrawal===0?'none':`${esc(t.withdrawal)} days – free ${fmtDate(e)}`}</span>`})():''}`).join('<hr class="tsep">')||'–'}</td><td>${esc(s.notes||'')}</td></tr>`}).join('')}
@@ -717,10 +728,12 @@ function renderHistory(){
     ${rodentHtml(h.rodent)}
     ${h.photos&&h.photos.length?`<div class="rod-sum"><b>Photos</b> (in the PDF report and the Photos folder on the NAS)<ul style="margin:4px 0 0;padding-left:18px">${h.photos.map(p=>`<li>${esc(p.label)}</li>`).join('')}</ul></div>`:''}
     <div class="entry-actions"><button class="btn btn-wa" data-wa="${esc(h.id)}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" style="flex:none"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Send via WhatsApp</span></button>
-    <button class="btn btn-quiet" data-pdf="${esc(h.id)}">Send PDF to NAS again</button>
-    ${isAdmin()?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
+    ${h.pending?((held.find(x=>x.rec.id===h.id)||{}).queued?(isAdmin()?`<button class="btn btn-quiet" data-sendnow="${esc(h.id)}">Send now (admin)</button>`:''):`<button class="btn btn-primary" data-sendsheet="${esc(h.id)}">Send report</button>`):`<button class="btn btn-quiet" data-pdf="${esc(h.id)}">Send PDF to NAS again</button>`}
+    ${isAdmin()&&!h.pending?`<button class="btn btn-danger" data-del="${esc(h.id)}">Delete inspection</button>`:''}</div></div></details>`).join('');
 }
 $('hist').addEventListener('click',async e=>{
+  const ss=e.target.closest('[data-sendsheet]'); if(ss){openSendSheet(ss.dataset.sendsheet); return}
+  const sn=e.target.closest('[data-sendnow]'); if(sn&&isAdmin()){const it=held.find(x=>x.rec.id===sn.dataset.sendnow); if(it&&confirm('Send this inspection now, before the phone has left the farm?')){it.force=true;checkHeld()} return}
   const wa=e.target.closest('[data-wa]'); if(wa){const h=history.find(x=>x.id===wa.dataset.wa); if(h)sendWhatsApp(h); return}
   const pdf=e.target.closest('[data-pdf]'); if(pdf){const h=history.find(x=>x.id===pdf.dataset.pdf); if(h){try{await queueReportPdf(h,photoCache[h.id]);toast('PDF queued for the NAS')}catch(err){toast('PDF could not be made')}} return}
   const id=e.target.dataset.del; if(!id)return;
@@ -731,11 +744,11 @@ let downloadsApi=null;
 function rodentCsv(r,k){if(!r)return ['','','','','',''];if(!r.areas){const t=(r.boxes||[]).filter(Boolean).length;return [`${t}/10 (whole site)`,r.restock?'Yes':'No',r.evidence?'Yes':'No','','',r.notes||'']}const a=r.areas[k]||{boxes:'',restock:false};return [a.boxes,a.restock?'Yes':'No',a.evidence===undefined?(r.evidence?'Yes':'No'):(a.evidence?'Yes':'No'),r.poisonType||'',r.poisonName||'',r.notes||'']}
 function csvCell(v){v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
 function buildCsv(){
-  const head=['Date','Time','Inspected by','Latitude','Longitude','Google Maps link','Area','Pigs in area (before deaths)',...CHECKS.map(c=>c.n),'Feed added','Dead pigs','Medicated','Pigs medicated','Dosage (ml per pig)','Total ml','Medication name','Serial number','Use by date','Withdrawal (days)','Free from medication','Medication reason','Marking colour','Mark type','Notes','Bait boxes checked','Bait restock required','Evidence of rodents','Poison type','Poison name','Rodent notes'];
+  const head=['Date','Time','Inspected by','Started','Left the farm','Minutes on site','Latitude','Longitude','Google Maps link','Area','Pigs in area (before deaths)',...CHECKS.map(c=>c.n),'Feed added','Dead pigs','Medicated','Pigs medicated','Dosage (ml per pig)','Total ml','Medication name','Serial number','Use by date','Withdrawal (days)','Free from medication','Medication reason','Marking colour','Mark type','Notes','Bait boxes checked','Bait restock required','Evidence of rodents','Poison type','Poison name','Rodent notes'];
   const rows=[head];
   history.forEach(h=>recLocs(h).forEach(l=>{const s=(h.locs||{})[l.k]||blankLoc();
     const ts=treats(s), J=f=>ts.map(f).join(' | ');
-    rows.push([fmtDate(h.date),h.time,h.name,h.geo?h.geo.lat:'',h.geo?h.geo.lng:'',h.geo?mapsUrl(h.geo):'',l.n,h.stock&&h.stock[l.k]!=null?h.stock[l.k]:'',...CHECKS.map(c=>!lay(l.k,h).checks.includes(c.k)?'':(chk(s,c.k)?'Yes':'No')),s.feedAdded,s.dead,s.medicated,J(t=>t.medCount||'0'),J(t=>t.medDose||''),J(t=>t.medDose?totalMl(t):''),J(t=>t.medName||''),J(t=>t.serial||''),J(t=>t.useBy?fmtDate(t.useBy):''),J(t=>t.withdrawal??''),J(t=>t.withdrawal!==undefined&&t.withdrawal!==''?fmtDate(wdEnd(h.date,t.withdrawal)):''),J(t=>t.medReason||''),J(t=>t.markColour||''),J(t=>t.markType||''),s.notes,...rodentCsv(h.rodent,l.k)])}));
+    rows.push([fmtDate(h.date),h.time,h.name,h.startedAt?hhmm(h.startedAt):'',h.leftAt?hhmm(h.leftAt):(h.siteEnd==='2h'?'Still on site after 2 h':''),h.onSiteMins??'',h.geo?h.geo.lat:'',h.geo?h.geo.lng:'',h.geo?mapsUrl(h.geo):'',l.n,h.stock&&h.stock[l.k]!=null?h.stock[l.k]:'',...CHECKS.map(c=>!lay(l.k,h).checks.includes(c.k)?'':(chk(s,c.k)?'Yes':'No')),s.feedAdded,s.dead,s.medicated,J(t=>t.medCount||'0'),J(t=>t.medDose||''),J(t=>t.medDose?totalMl(t):''),J(t=>t.medName||''),J(t=>t.serial||''),J(t=>t.useBy?fmtDate(t.useBy):''),J(t=>t.withdrawal??''),J(t=>t.withdrawal!==undefined&&t.withdrawal!==''?fmtDate(wdEnd(h.date,t.withdrawal)):''),J(t=>t.medReason||''),J(t=>t.markColour||''),J(t=>t.markType||''),s.notes,...rodentCsv(h.rodent,l.k)])}));
   return '﻿'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
 }
 function exportCsv(){
@@ -965,6 +978,7 @@ async function makeReportPdf(h,photos){
   page.drawText('Pig inspection report',{x:M,y:H-40,size:20,font:B,color:rgb(1,1,1)});
   page.drawText(pdfText(`${fmtDate(h.date)} at ${h.time}  ·  Inspected by ${h.name}`),{x:M,y:H-60,size:11,font:F,color:rgb(.85,.9,.87)});
   y=H-92;
+  if(h.startedAt)text(siteText(h),{size:10,bold:true});
   if(h.geo)text(`Location: ${h.geo.lat.toFixed(6)}, ${h.geo.lng.toFixed(6)}  (${mapsUrl(h.geo)})`,{size:9,color:grey});
   const totalPigs=h.stock?recLocs(h).reduce((a,l)=>a+(+h.stock[l.k]||0),0):null;
   text(`Dead pigs: ${h.totalDead||0}  ·  Pigs medicated: ${h.totalMedicated||0}${totalPigs!=null?`  ·  Pigs on farm before this inspection: ${totalPigs}`:''}`,{size:11,bold:true,color:h.totalDead?red:rgb(0,0,0)});
@@ -1083,7 +1097,7 @@ function applyRole(){
   $('me-name').textContent=me?me.name:'';
   $('me-role').textContent=me?(isAdmin()?'Admin – full access':'User – can carry out inspections and view records'):'';
   $('me-role').className='role-badge'+(isAdmin()?' admin':'');
-  $('app-version').textContent=`Pig Inspection${NAS.isNative()?'':' (browser)'}`;
+  $('app-version').textContent=`Pig Inspection${window.APP_VER?' '+window.APP_VER:''}${NAS.isNative()?'':' (browser)'}`;
   $('pigs-hint').textContent=isAdmin()?'Dead pigs recorded in each saved inspection are taken off automatically.'
     :'Dead pigs recorded in each saved inspection are taken off automatically. Only an admin can record stock counts, pigs in, moves and sales.';
   renderOperatives(); renderHistory(); renderSerials(); renderPoisons(); if(!$('view-pigs').hidden)renderPigs();
@@ -1233,3 +1247,201 @@ function promptFarmSetup(){
   toast('First, check the sheds and their equipment, then tap Save farm setup');
 }
 NAS.onChange(promptFarmSetup); promptFarmSetup();
+
+/* ---------- Time on site (500 m geofence) ----------
+   The inspection starts when the operative first fills anything in. From then the phone watches its
+   location (a background service on Android, so it works with the screen off). A saved inspection is
+   held on this phone and only sent to the NAS when the phone leaves the farm – more than 500 m from the
+   farm location – or 2 hours after the start, whichever is first. The time it left and the time on site
+   are recorded with the inspection. */
+const SITE_RADIUS=500, SITE_MAX=2*3600*1000;
+const hhmm=t=>{const d=new Date(t),p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`};
+const fmtDur=m=>m<60?`${m} min`:`${Math.floor(m/60)} h${m%60?` ${m%60} min`:''}`;
+const farmLoc=()=>{const f=NAS.setting('farm',null);return f&&isFinite(f.lat)&&isFinite(f.lng)?f:null};
+let browserGf=local.get('gf',null);   // browser stand-in for the Android service (testing)
+let gfWatch=null;
+function saveHeld(){ if(!local.set('held',held)){ heldMem=held; local.set('held',held.map(h=>({...h,photos:(h.photos||[]).map(p=>({...p,data:''}))}))) } }
+function holdInspection(rec,photos,send){
+  held.push({rec:{...rec,pending:true},photos:photos||[],send:!!send,queued:false}); saveHeld();
+  loadFromNas(); renderHistory(); updateTotals();
+}
+const distM=(a,b)=>{const R=6371000,r=x=>x*Math.PI/180,dLa=r(b.lat-a.lat),dLo=r(b.lng-a.lng);const h=Math.sin(dLa/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
+async function gfStatus(){
+  const B=NB();
+  if(B&&B.geofenceStatus){try{return await B.geofenceStatus()}catch(e){}}
+  return browserGf||{active:false,exitedAt:0,startedAt:0};
+}
+/* Start watching when an inspection begins */
+async function startInspection(){
+  if(form.startedAt)return;
+  form.startedAt=Date.now(); showSite();
+  let centre=farmLoc()||(geo?{lat:geo.lat,lng:geo.lng}:null);
+  if(!centre&&navigator.geolocation){
+    centre=await new Promise(res=>navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),()=>res(null),{enableHighAccuracy:true,timeout:15000,maximumAge:120000}));
+  }
+  if(!centre){showSite('No farm location yet, so leaving the farm can\'t be detected – the report will send 2 hours after the start. An admin can set the farm location in Settings → Farm setup.');return}
+  const st=await gfStatus();
+  // One watch covers every inspection on this phone until it leaves the farm
+  if(st.active)return;
+  const opts={lat:centre.lat,lng:centre.lng,radius:SITE_RADIUS,startedAt:form.startedAt,deadline:form.startedAt+SITE_MAX};
+  const B=NB();
+  if(B&&B.geofenceStart){try{await B.geofenceStart(opts);return}catch(e){console.error('geofence',e)}}
+  // Browser: only works while the page is open
+  browserGf={active:true,exitedAt:0,...opts}; local.set('gf',browserGf); watchBrowser();
+}
+function watchBrowser(){
+  if(!browserGf||!browserGf.active||!navigator.geolocation||gfWatch!==null)return;
+  gfWatch=navigator.geolocation.watchPosition(p=>{
+    if(!browserGf||!browserGf.active||p.timestamp<browserGf.startedAt)return;   // ignore cached fixes from before the start
+    const d=distM(browserGf,{lat:p.coords.latitude,lng:p.coords.longitude});
+    browserGf.lastDist=d; browserGf.lastAt=Date.now();
+    if(d-Math.min(p.coords.accuracy||0,100)>browserGf.radius){browserGf.exitedAt=Date.now();browserGf.active=false;navigator.geolocation.clearWatch(gfWatch);gfWatch=null}
+    if(Date.now()>=browserGf.deadline)browserGf.active=false;
+    local.set('gf',browserGf); checkHeld();
+  },()=>{},{enableHighAccuracy:true,maximumAge:0});
+}
+watchBrowser();
+async function stopWatch(){const B=NB(); if(B&&B.geofenceStop){try{await B.geofenceStop()}catch(e){}} if(browserGf){browserGf.active=false;local.set('gf',browserGf)} if(gfWatch!==null){navigator.geolocation.clearWatch(gfWatch);gfWatch=null}}
+/* Send any held inspection whose phone has left the farm, or whose 2 hours are up */
+let checking=false;
+async function checkHeld(){
+  if(checking||!held.length){showSite();return} checking=true;
+  try{
+    const st=await gfStatus(), now=Date.now();
+    for(const item of held.slice()){
+      const r=item.rec, exit=st.exitedAt&&st.exitedAt>=r.startedAt?st.exitedAt:0, limit=r.startedAt+SITE_MAX;
+      let how=null,left=null;
+      if(exit&&exit<=limit){how='left';left=exit}
+      else if(now>=limit){how='2h';left=null}
+      else if(item.force){how='early';left=now}
+      if(!item.queued&&!item.force)continue;
+      if(!item.queued)continue;   // saved but not swiped to send yet
+      if(!how)continue;
+      const rec={...r}; delete rec.pending;
+      rec.leftAt=left; rec.siteEnd=how; rec.onSiteMins=Math.round(((left||limit)-rec.startedAt)/60000);
+      const mem=heldMem&&heldMem.find(h=>h.rec.id===r.id);
+      try{await sendInspection(rec,(mem||item).photos,item.send)}catch(e){console.error(e);continue}
+      held=held.filter(h=>h.rec.id!==r.id); if(heldMem)heldMem=heldMem.filter(h=>h.rec.id!==r.id); saveHeld();
+      toast(how==='left'?`Left the farm at ${hhmm(left)} – report sent (${fmtDur(rec.onSiteMins)} on site)`:how==='2h'?'2 hours since the start – report sent':'Report sent');
+    }
+    if(!held.length&&!form.startedAt)stopWatch();
+    loadFromNas(); renderHistory();
+  } finally {checking=false; showSite()}
+}
+async function showSite(msg){
+  const el=$('site-out'); if(!el)return;
+  if(msg){el.textContent=msg;el.hidden=false;return}
+  const bits=[];
+  if(form.startedAt)bits.push(`Inspection started at ${hhmm(form.startedAt)}.`);
+  const q=held.filter(h=>h.queued), d=held.filter(h=>!h.queued);
+  if(q.length)bits.push(`${q.length} report${q.length===1?'':'s'} waiting to send – when you leave the farm (${SITE_RADIUS} m) or at ${hhmm(Math.min(...q.map(h=>h.rec.startedAt))+SITE_MAX)}.`);
+  if(d.length)bits.push(`${d.length} saved report${d.length===1?' has':'s have'} not been sent – tap here to send.`);
+  el.textContent=bits.join(' '); el.hidden=!bits.length; el.classList.toggle('click',!!d.length);
+}
+['input','change'].forEach(ev=>$('view-inspect').addEventListener(ev,e=>{if(e.target.closest('#locs,#rodent,.geo'))startInspection()}));
+$('locs').addEventListener('click',e=>{if(e.target.closest('[data-cam]'))startInspection()},true);
+$('geo-btn').addEventListener('click',startInspection);
+setInterval(checkHeld,30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkHeld()});
+checkHeld();
+
+/* Text for reports: "On site 13:05–13:48 (43 min), left the farm" */
+function siteText(h){
+  if(!h||!h.startedAt)return '';
+  const it=h.pending&&held.find(x=>x.rec.id===h.id);
+  if(it&&!it.queued)return `Started ${hhmm(h.startedAt)} – saved on this phone, not sent`;
+  if(h.pending)return `Started ${hhmm(h.startedAt)} – waiting to send (when the phone leaves the farm, or at ${hhmm(h.startedAt+SITE_MAX)})`;
+  if(h.siteEnd==='2h')return `On site from ${hhmm(h.startedAt)} – still within ${SITE_RADIUS} m after 2 hours (${fmtDur(h.onSiteMins)}+)`;
+  return `On site ${hhmm(h.startedAt)}–${hhmm(h.leftAt)} (${fmtDur(h.onSiteMins)})${h.siteEnd==='left'?', left the farm':', sent early by an admin'}`;
+}
+
+/* Farm location (centre of the 500 m area) in Farm setup */
+function renderFarmLoc(){const f=farmLoc(); $('farm-loc-out').innerHTML=f?`${esc(f.lat.toFixed(6))}, ${esc(f.lng.toFixed(6))} · <a href="${mapsUrl(f)}" target="_blank" rel="noopener">Open in Google Maps</a>`:'<b style="color:var(--loss)">Not set</b> – leaving the farm can\'t be detected, so reports send 2 hours after the start.'}
+$('farm-loc-btn').addEventListener('click',()=>{
+  if(!isAdmin())return;
+  if(!navigator.geolocation){toast('This device cannot share its location');return}
+  $('farm-loc-out').textContent='Finding your location…';
+  navigator.geolocation.getCurrentPosition(p=>{
+    if(!confirm(`Set the farm location to where you are now (accurate to about ${Math.round(p.coords.accuracy)} m)? Stand in the middle of the farm.`)){renderFarmLoc();return}
+    NAS.setSetting('farm',{lat:p.coords.latitude,lng:p.coords.longitude,radius:SITE_RADIUS}); renderFarmLoc(); toast('Farm location saved');
+  },err=>{renderFarmLoc(); onGeoError(err)},{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+});
+$('farm-loc-paste').addEventListener('change',e=>{
+  if(!isAdmin())return; const g=parseLocation(e.target.value); if(!g){toast('Coordinates not recognised');return}
+  NAS.setSetting('farm',{lat:g.lat,lng:g.lng,radius:SITE_RADIUS}); e.target.value=''; renderFarmLoc(); toast('Farm location saved');
+});
+renderFarmLoc(); NAS.onChange(renderFarmLoc);
+
+
+/* ---------- Swipe to send ----------
+   Save keeps the inspection on this phone. The box that opens has a slider: swiping it all the way
+   across sends the report – to the NAS once the phone has left the farm or 2 hours have passed. */
+let sheetId=null;
+function openSendSheet(id){
+  const it=held.find(x=>x.rec.id===id); if(!it)return;
+  sheetId=id; const r=it.rec;
+  const meds=r.totalMedicated||0, ph=(r.photos||[]).length;
+  $('sheet-sum').textContent=`${fmtDate(r.date)} at ${r.time} · ${r.name} · ${r.totalDead||0} dead · ${meds} medicated${ph?` · ${ph} photo${ph===1?'':'s'}`:''}. It is saved on this phone.`;
+  $('sheet-wa').checked=!!it.send;
+  $('sheet-when').textContent=`After you swipe, it sends when you leave the farm, or at ${hhmm(r.startedAt+SITE_MAX)} at the latest.`;
+  resetKnob(); $('send-sheet').hidden=false;
+}
+function closeSheet(){$('send-sheet').hidden=true; sheetId=null; showSite()}
+function resetKnob(){const k=$('swipe-knob');k.style.transition='left .2s';k.style.left='4px';$('swipe').classList.remove('done');$('swipe').querySelector('.swipe-text').textContent='Swipe to send report'}
+function confirmSend(){
+  const it=held.find(x=>x.rec.id===sheetId); if(!it){closeSheet();return}
+  it.queued=true; it.send=$('sheet-wa').checked; saveHeld();
+  $('swipe').classList.add('done'); $('swipe').querySelector('.swipe-text').textContent='Sending ✓';
+  setTimeout(()=>{closeSheet(); renderHistory(); toast(`Report will send when you leave the farm, or at ${hhmm(it.rec.startedAt+SITE_MAX)}`); checkHeld()},500);
+}
+(()=>{
+  const knob=$('swipe-knob'), track=$('swipe'); let x0=null, max=0;
+  knob.addEventListener('pointerdown',e=>{x0=e.clientX; max=track.clientWidth-knob.offsetWidth-8; knob.style.transition='none'; knob.setPointerCapture(e.pointerId)});
+  knob.addEventListener('pointermove',e=>{if(x0===null)return; knob.style.left=(4+Math.max(0,Math.min(max,e.clientX-x0)))+'px'});
+  const end=e=>{if(x0===null)return; const d=e.clientX-x0; x0=null; if(d>=max*0.85){knob.style.left=(4+max)+'px'; confirmSend()} else resetKnob()};
+  knob.addEventListener('pointerup',end); knob.addEventListener('pointercancel',()=>{x0=null;resetKnob()});
+  // Keyboard: Enter on the knob counts as a full swipe
+  knob.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();knob.style.left=(track.clientWidth-knob.offsetWidth-4)+'px';confirmSend()}});
+  knob.addEventListener('click',e=>e.preventDefault());
+})();
+$('sheet-later').addEventListener('click',()=>{closeSheet(); renderHistory(); toast('Saved on this phone – send it from History when ready')});
+$('site-out').addEventListener('click',()=>{const d=held.filter(h=>!h.queued); if(d.length)openSendSheet(d[d.length-1].rec.id)});
+
+/* ---------- App updates ----------
+   Each phone checks GitHub Releases when the app opens (and every few hours). If there's a newer
+   version it shows a banner; tapping it downloads the new APK and opens Android's installer.
+   Everything saved on the phone (sign-in, unsent reports) is kept. */
+const REPO='waynemcfarlane81/pig-inspection-app';
+let appVer='', latest=null, lastCheck=0;
+const verNum=v=>String(v||'').replace(/^v/,'').split('.').map(n=>+n||0);
+const newer=(a,b)=>{const x=verNum(a),y=verNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0)}return false};
+async function checkUpdate(manual){
+  const B=NB(); if(!B||!B.appVersion){if(manual)toast('Updates are checked in the Android app');return}
+  if(!manual&&Date.now()-lastCheck<3600e3)return; lastCheck=Date.now();
+  try{
+    if(!appVer){appVer=(await B.appVersion()).versionName||''; window.APP_VER=appVer; $('app-version').textContent=`Pig Inspection ${appVer}`}
+    const r=await B.request({url:`https://api.github.com/repos/${REPO}/releases/latest`,method:'GET',headers:{Accept:'application/vnd.github+json','User-Agent':'PigInspection'}});
+    if(r.status!==200)throw new Error('GitHub replied '+r.status);
+    const rel=JSON.parse(r.body); const tag=rel.tag_name;
+    const asset=(rel.assets||[]).find(a=>a.name==='PigInspection.apk');
+    if(tag&&asset&&newer(tag,appVer)){latest={tag,url:asset.browser_download_url};
+      const b=$('update-banner'); b.textContent=`Update available – Pig Inspection ${tag.replace(/^v/,'')}. Tap to install.`; b.hidden=false}
+    else {latest=null; $('update-banner').hidden=true; if(manual)toast(`You have the latest version (${appVer})`)}
+  }catch(e){if(manual)toast('Could not check for updates – check the phone has signal')}
+}
+async function installUpdate(){
+  if(!latest)return;
+  if(held.some(h=>!h.queued)&&!confirm('You have a saved report that has not been sent. It will be kept through the update. Update now?'))return;
+  if(!confirm(`Install Pig Inspection ${latest.tag.replace(/^v/,'')} now? Android will ask you to tap Update.`))return;
+  const b=$('update-banner'); b.textContent='Downloading the update…';
+  try{
+    const r=await NB().installUpdate({url:latest.url});
+    if(r&&r.needsPermission){b.textContent='Allow "Install unknown apps" for Pig Inspection, come back, then tap here again.';return}
+    b.textContent=`Tap Update on the Android screen to finish installing ${latest.tag.replace(/^v/,'')}.`;
+  }catch(e){b.textContent='The update did not download. Tap to try again.'}
+}
+$('update-banner').addEventListener('click',installUpdate);
+$('check-update').addEventListener('click',()=>checkUpdate(true));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate(false)});
+setInterval(()=>checkUpdate(false),6*3600e3);
+setTimeout(()=>checkUpdate(false),3000);

@@ -11,6 +11,7 @@ BUILD_NO="${GITHUB_RUN_NUMBER:-1}"
 mkdir -p "$PKG_DIR"
 cp android-custom/MainActivity.java "$PKG_DIR/MainActivity.java"
 cp android-custom/FarmPlugin.java "$PKG_DIR/FarmPlugin.java"
+cp android-custom/GeofenceService.java "$PKG_DIR/GeofenceService.java"
 
 # Allow plain HTTP for a NAS on the local network (the normal route is HTTPS) and ask for location.
 if ! grep -q usesCleartextTraffic "$MANIFEST"; then
@@ -24,6 +25,22 @@ fi
 if ! grep -q android.permission.CAMERA "$MANIFEST"; then
   sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n</manifest>#' "$MANIFEST"
 fi
+
+# Geofence: a foreground location service logs when the phone leaves the farm during an inspection
+if ! grep -q GeofenceService "$MANIFEST"; then
+  sed -i 's#</application>#    <service android:name=".GeofenceService" android:exported="false" android:foregroundServiceType="location" />\n    </application>#' "$MANIFEST"
+  sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n</manifest>#' "$MANIFEST"
+fi
+
+# In-app updates: download the new APK from GitHub Releases and open the installer
+if ! grep -q REQUEST_INSTALL_PACKAGES "$MANIFEST"; then
+  sed -i 's#</manifest>#    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>#' "$MANIFEST"
+fi
+PATHS=android/app/src/main/res/xml/file_paths.xml
+if [ -f "$PATHS" ] && ! grep -q "cache-path" "$PATHS"; then
+  sed -i 's#</paths>#    <cache-path name="cache" path="." />\n</paths>#' "$PATHS"
+fi
+grep -q "fileprovider" "$MANIFEST" || echo "WARNING: no FileProvider in the manifest – in-app updates will fail"
 
 # Version number goes up with every build so phones accept the update.
 sed -i -E "s/versionCode [0-9]+/versionCode ${BUILD_NO}/" "$GRADLE"

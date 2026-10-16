@@ -1,6 +1,10 @@
 package tech.holderness.piginspection;
 
 import android.Manifest;
+import android.content.SharedPreferences;
+import android.os.Build;
+
+import androidx.core.app.ActivityCompat;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -8,6 +12,14 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Base64;
+import android.content.pm.PackageInfo;
+
+import androidx.core.content.FileProvider;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 import androidx.core.content.ContextCompat;
 import androidx.core.location.LocationManagerCompat;
@@ -33,6 +45,7 @@ import okhttp3.Response;
  *  - request(): any HTTP/WebDAV request (GET, PUT, DELETE, MKCOL, PROPFIND) to the NAS.
  *    Done natively so the browser's CORS and plain-HTTP rules don't block it.
  *  - locationStatus() / openSettings(): help the operative switch location on.
+ *  - geofenceStart() / geofenceStatus() / geofenceStop(): log when the phone leaves the farm (GeofenceService).
  */
 @CapacitorPlugin(name = "Farm")
 public class FarmPlugin extends Plugin {
@@ -141,5 +154,102 @@ public class FarmPlugin extends Plugin {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i);
         call.resolve();
+    }
+
+    /** Start watching for the phone leaving the farm. lat/lng = farm centre, radius in metres, times in ms. */
+    @PluginMethod
+    public void geofenceStart(PluginCall call) {
+        Double lat = call.getDouble("lat"), lng = call.getDouble("lng");
+        if (lat == null || lng == null) { call.reject("No farm location"); return; }
+        float radius = call.getFloat("radius", 500f);
+        long startedAt = call.getLong("startedAt", System.currentTimeMillis());
+        long deadline = call.getLong("deadline", startedAt + 2 * 3600 * 1000L);
+        // Ask once to show the "left the farm" notification (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33 && getActivity() != null
+                && ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4711);
+        }
+        try {
+            GeofenceService.start(getContext(), lat, lng, radius, startedAt, deadline);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+
+    @PluginMethod
+    public void geofenceStatus(PluginCall call) {
+        SharedPreferences p = GeofenceService.prefs(getContext());
+        JSObject ret = new JSObject();
+        ret.put("active", p.getBoolean("active", false));
+        ret.put("startedAt", p.getLong("startedAt", 0));
+        ret.put("deadline", p.getLong("deadline", 0));
+        ret.put("exitedAt", p.getLong("exitedAt", 0));
+        ret.put("lastDist", (double) p.getFloat("lastDist", -1));
+        ret.put("lastAt", p.getLong("lastAt", 0));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void geofenceStop(PluginCall call) {
+        GeofenceService.stop(getContext());
+        call.resolve();
+    }
+
+    /** The installed app version, e.g. 2.0.15 */
+    @PluginMethod
+    public void appVersion(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            PackageInfo pi = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
+            ret.put("versionName", pi.versionName);
+            ret.put("versionCode", Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
+        } catch (Exception e) {
+            ret.put("versionName", "");
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * Download a new APK and open Android's installer for it. The operative taps "Update" to finish.
+     * The first time, Android asks to allow "Install unknown apps" for Pig Inspection.
+     */
+    @PluginMethod
+    public void installUpdate(final PluginCall call) {
+        final String url = call.getString("url");
+        if (url == null) { call.reject("No URL"); return; }
+        final Context ctx = getContext();
+        if (Build.VERSION.SDK_INT >= 26 && !ctx.getPackageManager().canRequestPackageInstalls()) {
+            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + ctx.getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+            JSObject ret = new JSObject();
+            ret.put("needsPermission", true);
+            call.resolve(ret);
+            return;
+        }
+        new Thread(() -> {
+            try {
+                OkHttpClient dl = client.newBuilder().readTimeout(5, TimeUnit.MINUTES).build();
+                File out = new File(ctx.getCacheDir(), "update.apk");
+                try (Response r = dl.newCall(new Request.Builder().url(url).header("User-Agent", "PigInspection").build()).execute()) {
+                    if (!r.isSuccessful() || r.body() == null) { call.reject("Download failed (" + r.code() + ")"); return; }
+                    try (InputStream in = r.body().byteStream(); OutputStream os = new FileOutputStream(out)) {
+                        byte[] buf = new byte[65536]; int n;
+                        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                    }
+                }
+                Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", out);
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, "application/vnd.android.package-archive");
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(i);
+                JSObject ret = new JSObject();
+                ret.put("started", true);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : e.toString());
+            }
+        }).start();
     }
 }
